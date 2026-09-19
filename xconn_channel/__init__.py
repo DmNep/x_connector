@@ -12,7 +12,8 @@
 Спецификация — docs/protocol.md, константы — config.py.
 """
 
-from . import config, crc, framing
+from . import config, crc, demodulator, framing, modulator
+from .demodulator import Demodulator, decimate
 from .framing import (
     BitCollector,
     Frame,
@@ -21,15 +22,21 @@ from .framing import (
     parse_frame,
     to_bits,
 )
+from .modulator import Modulator
 
 __all__ = [
     "BitCollector",
+    "Demodulator",
     "Frame",
     "FrameError",
+    "Modulator",
     "build_frame",
     "config",
     "crc",
+    "decimate",
+    "demodulator",
     "framing",
+    "modulator",
     "parse_frame",
     "to_bits",
 ]
