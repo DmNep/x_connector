@@ -341,6 +341,32 @@ class Vt100:
         self.screen.cur_col = self._alt_saved.cur_col
         self.screen.flags = self._alt_saved.flags
 
+    # --- смена формы ----------------------------------------------------------
+
+    def resize(self, rows: int, cols: int) -> None:
+        """RESIZE (docs/protocol.md 9): смена формы сетки, пересечение сохраняется.
+
+        Скролл-регион и alt-буферы сбрасываются: регион и содержимое
+        привязаны к старой форме. Vim и htop после SIGWINCH перерисуются
+        целиком, так что потеря альт-буфера незаметна.
+        """
+        old = self.screen
+        new = Screen(rows, cols)
+        copy_rows = min(old.rows, rows)
+        copy_cols = min(old.cols, cols)
+        for r in range(copy_rows):
+            new.cells[r * cols : r * cols + copy_cols] = old.cells[
+                r * old.cols : r * old.cols + copy_cols
+            ]
+        new.cur_row = min(old.cur_row, rows - 1)
+        new.cur_col = min(old.cur_col, cols - 1)
+        new.flags = old.flags
+        self.screen = new
+        self._alt = Screen(rows, cols)
+        self._alt_saved = Screen(rows, cols)
+        self._top, self._bottom = 0, rows - 1
+        self._wrap_pending = False
+
     # --- сохранение курсора -------------------------------------------------------
 
     def _save_cursor(self) -> None:

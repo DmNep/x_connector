@@ -201,13 +201,29 @@ class AgentSession:
     """
 
     def __init__(self, send, receive, handler) -> None:
-        """handler(frame: Frame) -> (frame_type, payload) ответа."""
+        """handler(frame: Frame) -> (frame_type, payload) ответа.
+
+        Повторный REQ с тем же seq не исполняется повторно, но ответ
+        пересчитывается через replay_response (если задан): между
+        ретрансляциями состояние могло измениться (деградация дельты
+        до полного снимка), и закешированный ответ обязан обновиться.
+        """
         self._send = send
         self._receive = receive
         self._handler = handler
+        self._replay_response = None
         self._last_seq: int | None = None
         self._cached: bytes | None = None
         self.stats = {"frames": 0, "replays": 0, "naks": 0, "rejected": 0}
+
+    def set_replay_response(self, callback) -> None:
+        """callback() -> (frame_type, payload) ответа на повторный seq.
+
+        Вызывается вместо handler при повторе seq: исполнение (запись в
+        PTY, исполнение команды) не повторяется, ответ пересчитывается.
+        Без callback повтор отдаёт закешированный байт в байт.
+        """
+        self._replay_response = callback
 
     def poll(self, timeout_ms: float) -> bool:
         """Одна итерация ожидания: принять кадр, ответить. True — был обмен.
@@ -249,7 +265,12 @@ class AgentSession:
 
         if self._last_seq is not None and request.seq == self._last_seq:
             # Повтор REQ с тем же seq: ретрансляция мастера, отдаём кэш.
+            # Ответ пересчитывается, если задан replay_response: между
+            # ретрансляциями состояние могло измениться, и кэш устарел.
             self.stats["replays"] += 1
+            if self._replay_response is not None:
+                reply_type, reply_payload = self._replay_response()
+                self._cached = framing.build_frame(reply_type, request.seq, reply_payload)
             assert self._cached is not None
             return self._cached
 

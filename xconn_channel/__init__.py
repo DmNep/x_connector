@@ -13,6 +13,7 @@
 """
 
 from . import (
+    agent,
     config,
     crc,
     demodulator,
@@ -23,6 +24,7 @@ from . import (
     session,
     vt100,
 )
+from .agent import AgentCore
 from .demodulator import Demodulator, decimate
 from .framing import (
     BitCollector,
@@ -38,6 +40,7 @@ from .screen import Screen, ScreenError
 from .session import AgentSession, MasterSession, SessionError
 
 __all__ = [
+    "AgentCore",
     "AgentSession",
     "BitCollector",
     "Demodulator",
@@ -67,4 +70,4 @@ __all__ = [
     "vt100",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
