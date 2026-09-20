@@ -12,7 +12,17 @@
 Спецификация — docs/protocol.md, константы — config.py.
 """
 
-from . import config, crc, demodulator, framing, handshake, modulator, screen, session
+from . import (
+    config,
+    crc,
+    demodulator,
+    framing,
+    handshake,
+    modulator,
+    screen,
+    session,
+    vt100,
+)
 from .demodulator import Demodulator, decimate
 from .framing import (
     BitCollector,
@@ -54,6 +64,7 @@ __all__ = [
     "screen",
     "session",
     "to_bits",
+    "vt100",
 ]
 
 __version__ = "0.1.0"
