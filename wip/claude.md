@@ -4,15 +4,16 @@ worktree: D:/projects/x_connector-claude
 branch: wip/claude-idle
 task: ""
 hands_off: []
-updated: 2026-09-20T23:55+03:00
+updated: 2026-09-21T00:10+03:00
 ---
 
-Свободен. Починил находку №4 из ревью (Client._apply не перехватывал
-ScreenError у screen.parse_full, в отличие от parse_delta рядом,
-docs/protocol.md 6.2) — теперь SCREEN_FULL получает то же
-try/except -> refresh(). xconn_channel/client.py, tests/test_client.py
-(test_apply_corrupted_full_snapshot_does_not_crash), коммит "Client:
-recover from a malformed SCREEN_FULL instead of crashing". Тесты
-зелёные (187/187). Находки №1–3 починены ранее в этой сессии. Остались
-5–10. Каталог Claude: `D:\projects\x_connector-claude`. Перед задачей
-заполнить поля и поставить `status: active`.
+Свободен. Починил находку №5 из ревью (MasterSession.exchange: NAK на
+REQ делил общий бюджет ретраев с таймаутами вопреки собственному
+комментарию, docs/protocol.md 8.2) — теперь у req_naks свой бюджет
+MAX_RETRY+1, независимый от attempts. xconn_channel/session.py,
+tests/test_session.py
+(test_req_naks_and_timeouts_have_independent_retry_budgets), коммит
+"Session: give REQ-NAK retries their own budget, separate from
+timeouts". Тесты зелёные (188/188). Находки №1–4 починены ранее в этой
+сессии. Остались 6–10. Каталог Claude: `D:\projects\x_connector-claude`.
+Перед задачей заполнить поля и поставить `status: active`.
