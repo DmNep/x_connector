@@ -161,6 +161,37 @@ class TestRetries(unittest.TestCase):
         self.assertEqual(wire.sent_master, config.MAX_RETRY + 1)
         self.assertEqual(master.seq, 0, "seq не двинулся: обмен не завершён")
 
+    def test_req_naks_and_timeouts_have_independent_retry_budgets(self) -> None:
+        """NAK на REQ и таймаут не делят один бюджет ретраев (docs/protocol.md 8.2).
+
+        Комментарий у ветки NAK утверждает, что отказ агента на REQ — не
+        наш сбой (повреждение кадра в тракте на пути туда) и в бюджет
+        attempts не входит. Здесь три NAK и три таймаута подряд — шесть
+        сбоев, больше единого бюджета MAX_RETRY+1=4, который делили бы
+        оба вида сбоя без фикса, — и обмен всё равно завершается успехом
+        на седьмой попытке.
+        """
+        sent: list[bytes] = []
+        outcomes = iter(["nak", "timeout", "nak", "timeout", "nak", "timeout", "ok"])
+
+        def send(data: bytes) -> None:
+            sent.append(data)
+
+        def receive(timeout: float = 0.0):
+            seq = framing.parse_frame(sent[-1]).seq
+            outcome = next(outcomes)
+            if outcome == "nak":
+                return framing.nak(seq, config.NAK_CRC)
+            if outcome == "timeout":
+                return None
+            return framing.build_frame(config.PONG, seq)
+
+        master = MasterSession(send, receive, clock=FakeClock())
+        reply = master.exchange(config.PING)
+        self.assertEqual(reply.type, config.PONG)
+        # 6 REQ, съевших сбои (3 NAK + 3 таймаута), 7-й успешный REQ, ACK.
+        self.assertEqual(len(sent), 8)
+
     def test_damaged_request_gets_nak(self) -> None:
         """REQ с битой CRC: агент отвечает NAK, мастер ретранслирует.
 
