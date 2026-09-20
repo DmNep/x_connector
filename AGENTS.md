@@ -323,12 +323,12 @@
 
 ### 6.2 Файл занятости
 
-Перед любой правкой агент читает оба файла в `wip/` и пишет только свой.
+Перед любой правкой агент читает **живой** файл второго агента в чужом каталоге (не копию в своей ветке — она отстаёт) и пишет только свой файл в своём каталоге.
 
-| Файл | Кто пишет |
-|---|---|
-| `wip/cursor.md` | только Cursor |
-| `wip/claude.md` | только Claude |
+| Кто | Пишет | Читает у напарника |
+|---|---|---|
+| Cursor | `D:\projects\x_connector\wip\cursor.md` | `D:\projects\x_connector-claude\wip\claude.md` |
+| Claude | `D:\projects\x_connector-claude\wip\claude.md` | `D:\projects\x_connector\wip\cursor.md` |
 
 Формат — короткий YAML в начале файла (его же читает человек):
 
