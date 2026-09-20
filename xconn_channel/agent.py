@@ -24,6 +24,8 @@ master-сторону PTY, вывод PTY разбирается эмулято�
 
 from __future__ import annotations
 
+import time
+
 from . import config, framing, screen
 from .framing import Frame
 from .screen import Screen
@@ -33,7 +35,15 @@ from .vt100 import Vt100
 class AgentCore:
     """Ядро агента: PTY-цикл и снимки, без аудио и без ОС-специфики."""
 
-    def __init__(self, write_pty, read_pty, rows=None, cols=None) -> None:
+    def __init__(
+        self,
+        write_pty,
+        read_pty,
+        rows=None,
+        cols=None,
+        pump_wait_ms: float = 0,
+        pump_idle_ms: float = 0,
+    ) -> None:
         self._write_pty = write_pty
         self._read_pty = read_pty
         helo_rows = config.DEFAULT_ROWS if rows is None else rows
@@ -42,6 +52,11 @@ class AgentCore:
         self._base: Screen | None = None
         self._base_seq: int = 0
         self._replies = bytearray()
+        # На FakePty данные появляются синхронно с записью — ждать нечего.
+        # На живом bash вывод приходит с задержкой: wait — до первого байта,
+        # idle — тишина после последнего, после которой снимок стабилен.
+        self._pump_wait_ms = pump_wait_ms
+        self._pump_idle_ms = pump_idle_ms
         self.stats = {"cmds": 0, "keys": 0, "resizes": 0, "fulls": 0, "deltas": 0}
 
     @property
@@ -50,7 +65,7 @@ class AgentCore:
 
     # --- PTY-цикл -------------------------------------------------------------
 
-    def pump(self) -> None:
+    def pump(self, wait_ms: float | None = None, idle_ms: float | None = None) -> None:
         """Забрать вывод PTY в эмулятор, ответы терминала — обратно в PTY.
 
         Чтение идёт до исчерпания: вывод приходит кусками на любых
@@ -58,14 +73,36 @@ class AgentCore:
         считается по половине вывода. Ответы на запросы (ESC[6n и прочие)
         предназначены программе на slave-стороне PTY и обязаны идти в
         master-сторону — туда же, куда пишет клиент (docs/protocol.md 6.3).
+
+        wait_ms — сколько ждать первого байта (живой bash не отвечает
+        мгновенно). idle_ms — тишина после последнего байта, после которой
+        считаем вывод законченным. Нули — как раньше: один проход до пустого
+        чтения, без пауз. Это сохраняет тесты на FakePty.
         """
+        wait = self._pump_wait_ms if wait_ms is None else wait_ms
+        idle = self._pump_idle_ms if idle_ms is None else idle_ms
+        first_deadline = time.monotonic() + wait / 1000.0
+        last_data = time.monotonic()
+        got = False
         while True:
             data = self._read_pty()
-            if not data:
+            if data:
+                got = True
+                last_data = time.monotonic()
+                replies = self._vt.feed(data)
+                if replies:
+                    self._write_pty(replies)
+                continue
+            now = time.monotonic()
+            if not got:
+                if now < first_deadline:
+                    time.sleep(min(0.01, first_deadline - now))
+                    continue
                 return
-            replies = self._vt.feed(data)
-            if replies:
-                self._write_pty(replies)
+            if idle and (now - last_data) * 1000.0 < idle:
+                time.sleep(0.01)
+                continue
+            return
 
     # --- обработка кадров --------------------------------------------------------
 
@@ -95,8 +132,12 @@ class AgentCore:
             self.pump()
             return self._snapshot(frame.seq)
         if frame.type == config.PING:
-            # PING с пустым payload — PONG; снимок по нему не приходит,
-            # полный снимок по запросу — отдельный флаг (6.2).
+            # Пустой PING — PONG. Первый байт PING_FULL — полный снимок
+            # по запросу (docs/protocol.md 6.2).
+            if frame.payload[:1] == bytes((config.PING_FULL,)):
+                self._base = None
+                self.pump()
+                return self._snapshot(frame.seq)
             return config.PONG, b""
         return config.NAK, bytes((frame.seq, config.NAK_TYPE))
 

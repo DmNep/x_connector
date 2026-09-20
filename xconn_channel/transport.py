@@ -25,6 +25,7 @@ T_LEAD — пауза перед началом передачи после пр
 from __future__ import annotations
 
 import array
+import threading
 import time
 
 from . import config, framing
@@ -71,6 +72,7 @@ class AudioTransport:
         self._sink = sink
         self._source = source
         self._mode = mode
+        self._gate_level = gate_level
         self._mod = Modulator(mode)
         self._dem = Demodulator(mode, gate_level)
         self._clock = clock or _Clock()
@@ -82,26 +84,45 @@ class AudioTransport:
     def mode(self) -> str:
         return self._mode
 
+    def set_mode(self, mode: str) -> None:
+        """Смена режима после HELO: probe → base (docs/protocol.md 8.5).
+
+        Модулятор и демодулятор создаются заново. Фаза и PLL с предыдущего
+        режима на другой скорости не имеют смысла. Вызывать после отправки
+        последнего кадра старого режима, иначе ответ HELO уйдёт уже новым
+        тоном, а приёмник ещё в probe.
+        """
+        config.check_mode(mode)
+        if mode == self._mode:
+            return
+        self._mode = mode
+        self._mod = Modulator(mode)
+        self._dem = Demodulator(mode, self._gate_level)
+        self._idle_s = config.t_idle_ms(mode) / 1000.0
+        self._last_signal = None
+
     # --- отправка -------------------------------------------------------------
 
     def send(self, frame_bytes: bytes) -> None:
-        """Кадр в эфир с таймингами полудуплекса (docs/protocol.md 8.3)."""
-        chunk = self._mod.silence(config.T_LEAD_MS)
-        chunk += self._mod.modulate(framing.to_bits(frame_bytes))
-        chunk += self._mod.silence(config.GAP_MS)
-        self._sink(chunk)
+        """Кадр в эфир с таймингами полудуплекса (docs/protocol.md 8.3).
+
+        Тишина T_LEAD уходит первой, до расчёта синуса кадра: приёмник
+        должен начать T_CARRIER, не дожидаясь, пока чистый Python посчитает
+        все отсчёты длинного SCREEN_FULL.
+        """
+        self._sink(self._mod.silence(config.T_LEAD_MS))
+        self._sink(self._mod.modulate(framing.to_bits(frame_bytes)))
+        self._sink(self._mod.silence(config.GAP_MS))
 
     # --- приём -----------------------------------------------------------------
 
     def receive(self, timeout: float) -> bytes | None:
-        """Ждать кадр до timeout (T_CARRIER у вызывающего).
+        """Ждать кадр. timeout — T_CARRIER: ожидание начала несущей.
 
-        Возвращает байты кадра, None — таймаут. timeout <= 0 — одна
-        вычитка источника без ожидания: для прокрутки из чужого цикла
-        ожидания, данные либо уже накопились, либо их пока нет.
-
-        Обрыв внутри кадра ловится по тишине: gate молчит дольше T_IDLE —
-        сброс демодулятора, оборванный кадр не отравляет приём следующего.
+        После того как gate увидел тон, ждать до сборки кадра, обрыва по
+        T_IDLE или потолка длительности максимального кадра. Нельзя
+        отрезать длинный SCREEN_FULL тем же T_CARRIER: 250 мс меньше
+        1.76 с снимка (docs/protocol.md 8.3, 8.4).
         """
         if timeout <= 0:
             chunk = self._source()
@@ -109,15 +130,41 @@ class AudioTransport:
                 return self._feed(chunk)
             return None
 
-        deadline = self._clock() + timeout
-        while self._clock() < deadline:
+        carrier_deadline = self._clock() + timeout
+        max_frame_s = config.frame_seconds(config.MAX_PAYLOAD, self._mode) + 1.0
+        frame_deadline = None
+        heard = False
+
+        while True:
+            now = self._clock()
+            if not heard and now >= carrier_deadline:
+                return None
+            if heard and frame_deadline is not None and now >= frame_deadline:
+                self._dem.reset()
+                self._last_signal = None
+                return None
+
             chunk = self._source()
             if chunk:
                 frame_bytes = self._feed(chunk)
                 if frame_bytes is not None:
                     return frame_bytes
-            self._check_idle(self._clock())
-        return None
+                if self._dem._gate.active:
+                    if not heard:
+                        heard = True
+                        frame_deadline = now + max_frame_s
+                    self._last_signal = self._clock()
+                continue
+
+            if heard:
+                self._check_idle(self._clock())
+                if self._last_signal is None:
+                    return None
+            remaining_to = frame_deadline if heard else carrier_deadline
+            remaining = remaining_to - self._clock() if remaining_to is not None else 0.0
+            if remaining <= 0:
+                continue
+            time.sleep(min(0.005, remaining))
 
     def _feed(self, chunk) -> bytes | None:
         """Пропустить отсчёты в демодулятор. Байты кадра — при сборке.
@@ -160,16 +207,20 @@ class SampleLink:
 
         self._rng = random.Random(seed)
         self.noise = noise
+        self._lock = threading.Lock()
         self._a_out: list[int] = []
         self._b_out: list[int] = []
         self._a_pending = array.array("h")
         self._b_pending = array.array("h")
 
     def _deliver(self, chunk: array.array, inbox: array.array) -> None:
-        if self.noise:
-            inbox.extend(int(v + self._rng.uniform(-self.noise, self.noise)) for v in chunk)
-        else:
-            inbox.extend(chunk)
+        with self._lock:
+            if self.noise:
+                inbox.extend(
+                    int(v + self._rng.uniform(-self.noise, self.noise)) for v in chunk
+                )
+            else:
+                inbox.extend(chunk)
 
     def end_a(self):
         return (
@@ -184,11 +235,13 @@ class SampleLink:
         )
 
     def _take_a(self) -> array.array | None:
-        chunk = self._a_pending[:]
-        del self._a_pending[:]
-        return chunk or None
+        with self._lock:
+            chunk = self._a_pending[:]
+            del self._a_pending[:]
+            return chunk or None
 
     def _take_b(self) -> array.array | None:
-        chunk = self._b_pending[:]
-        del self._b_pending[:]
-        return chunk or None
+        with self._lock:
+            chunk = self._b_pending[:]
+            del self._b_pending[:]
+            return chunk or None

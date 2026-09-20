@@ -70,7 +70,8 @@ class TestTransportRoundtrip(unittest.TestCase):
 
         ta = AudioTransport(capturing_sink, source_a, config.BASE)
         ta.send(framing.build_frame(config.PING, 0))
-        chunk = captured[0]
+        self.assertEqual(len(captured), 3, "T_LEAD, кадр и GAP уходят отдельно")
+        chunk = captured[0] + captured[1] + captured[2]
         lead = round(config.T_LEAD_MS * config.SAMPLE_RATE / 1000)
         gap = round(config.GAP_MS * config.SAMPLE_RATE / 1000)
         # Тишина спереди и сзади: сигнал не прилипает к границам слота.

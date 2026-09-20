@@ -26,6 +26,8 @@ from . import (
     vt100,
 )
 from .agent import AgentCore
+from .client import Client
+from .host import AgentHost
 from .transport import AudioTransport, SampleLink
 from .demodulator import Demodulator, decimate
 from .framing import (
@@ -43,7 +45,9 @@ from .session import AgentSession, MasterSession, SessionError
 
 __all__ = [
     "AgentCore",
+    "AgentHost",
     "AgentSession",
+    "Client",
     "AudioTransport",
     "BitCollector",
     "Demodulator",
@@ -75,4 +79,4 @@ __all__ = [
     "vt100",
 ]
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"

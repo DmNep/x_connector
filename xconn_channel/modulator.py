@@ -71,3 +71,29 @@ class Modulator:
         """
         total = round(milliseconds * config.SAMPLE_RATE / 1000.0)
         return array.array("h", bytes(2 * total))
+
+
+def upsample(samples: array.array, factor: int = config.DECIMATION) -> array.array:
+    """16 кГц -> 48 кГц линейной интерполяцией для устройства (docs/protocol.md 2).
+
+    Симметрично decimate() приёмника: DSP работает на 16 кГц, звуковая
+    карта обязана быть на стандартных 48 кГц, иначе драйвер включит свой
+    ресемплинг с непредсказуемой фазой.
+
+    Интерполяция, а не повторение отсчётов: ступенька zero-order hold
+    даёт образы спектра вокруг 16 кГц полной амплитудой, линейная
+    интерполяция их ослабляет. Полоса полезного сигнала до 3400 Гц,
+    образы выше 12 кГц приёмник всё равно режет прореживанием, но
+    вносить их в тракт с запасом не стоит.
+    """
+    if factor <= 0:
+        raise ValueError(f"фактор подъёма {factor} обязан быть положительным")
+    total = len(samples)
+    out = array.array("h", bytes(2 * total * factor))
+    for i, value in enumerate(samples):
+        nxt = samples[i + 1] if i + 1 < total else value
+        base = value * factor
+        step = nxt - value
+        for k in range(factor):
+            out[i * factor + k] = (base + step * k) // factor
+    return out

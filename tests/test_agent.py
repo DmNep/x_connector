@@ -173,6 +173,18 @@ class TestAgentCore(unittest.TestCase):
         reply_type, payload = core.handle(frame(config.PING, 0))
         self.assertEqual((reply_type, payload), (config.PONG, b""))
 
+    def test_ping_full_returns_screen(self) -> None:
+        """PING с флагом full — SCREEN_FULL, не PONG (docs/protocol.md 6.2)."""
+        pty = FakePty([])
+        pty._pending += b"$ "
+        core = AgentCore(pty.write, pty.read)
+        reply_type, payload = core.handle(
+            frame(config.PING, 0, bytes((config.PING_FULL,)))
+        )
+        self.assertEqual(reply_type, config.SCREEN_FULL)
+        restored = screen.parse_full(payload)
+        self.assertEqual(restored.row_bytes(0)[:2], b"$ ")
+
     def test_key_goes_to_pty(self) -> None:
         """KEY: один ключ без текста, байты напрямую в PTY (5)."""
         pty = FakePty([b"$ ", b"^C$ "])

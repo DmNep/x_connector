@@ -227,6 +227,7 @@ class TestIdempotency(unittest.TestCase):
         agent = AgentSession(wire.agent_send, wire.agent_receive, pong_handler)
         wire.attach(agent)
         self.assertIsNone(agent._parse(framing.ack(0)))
+        # NAK без кэша — молча: повторять нечего.
         self.assertIsNone(agent._parse(framing.nak(0, config.NAK_CRC)))
 
     def test_garbage_answered_with_silence(self) -> None:
@@ -261,12 +262,16 @@ class TestNakPath(unittest.TestCase):
         master_reply = master._parse_chunk(bytes(damaged))
         self.assertIsInstance(master_reply, FrameError)
 
-        # Мастер шлёт NAK, агент ретранслирует ответ из кэша.
+        # Мастер шлёт NAK, агент ретранслирует RESP из кэша (docs/protocol.md 8.2).
         nak_frame = framing.nak(0, master_reply.code)
         agent_replay = agent._parse(nak_frame)
-        self.assertIsNone(agent_replay, "NAK мастера не исполняется как запрос")
+        self.assertIsNotNone(agent_replay, "NAK мастера — запрос повтора RESP")
+        replayed = framing.parse_frame(agent_replay)
+        self.assertEqual(replayed.type, config.PONG)
+        self.assertEqual(replayed.seq, 0)
+        self.assertEqual(executions, [1], "исполнение по NAK не повторяется")
 
-        # Прямая проверка: повторный REQ с тем же seq даёт тот же ответ.
+        # Повторный REQ с тем же seq по-прежнему отдаёт кэш.
         cached = agent._parse(framing.build_frame(config.PING, 0))
         self.assertEqual(executions, [1])
         self.assertIsNotNone(cached)

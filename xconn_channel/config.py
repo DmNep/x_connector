@@ -133,6 +133,8 @@ NAK = 0x04
 HELO = 0x40
 PING = 0x41
 PONG = 0x42
+# Первый байт payload PING: запрос SCREEN_FULL (docs/protocol.md 6.2).
+PING_FULL = 0x01
 CMD = 0x10
 KEY = 0x11
 RESIZE = 0x12

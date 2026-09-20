@@ -164,15 +164,19 @@ class MasterSession:
         self._seq = (self._seq + 1) % 256
 
     def _await_reply(self, seq: int) -> Frame | FrameError | None:
-        """Ждать ответ до T_CARRIER, внутри — обрыв по T_IDLE."""
+        """Ждать ответ до T_CARRIER.
+
+        Обрыв внутри кадра по T_IDLE — работа транспорта (docs/protocol.md
+        8.3): сессия видит уже собранный кадр или пусто. Один вызов
+        receive с остатком T_CARRIER; пустой возврат — агент молчит.
+        """
         deadline = self._clock() + config.T_CARRIER_MS / 1000.0
-        idle = config.t_idle_ms(self._mode) / 1000.0
-        while self._clock() < deadline:
-            chunk = self._receive(deadline - self._clock())
-            if chunk:
-                return self._parse_chunk(chunk)
-            # receive вернул пусто: тракт молчит, таймаут исчерпан.
+        remaining = deadline - self._clock()
+        if remaining <= 0:
             return None
+        chunk = self._receive(remaining)
+        if chunk:
+            return self._parse_chunk(chunk)
         return None
 
     def _parse_chunk(self, chunk: bytes) -> Frame | FrameError | None:
@@ -270,11 +274,24 @@ class AgentSession:
                 return None
             return framing.nak(error.seq, error.code)
 
-        if request.type in (config.ACK, config.NAK):
-            # ACK/NAK всегда идут в ответ на принятый кадр, самостоятельно
-            # не отправляются (8.2). Наш ACK от мастера — не запрос,
-            # ответа не требует.
+        if request.type == config.ACK:
+            # ACK мастера — не запрос, ответа не требует (8.2).
             return None
+
+        if request.type == config.NAK:
+            # NAK мастера — запрос повтора RESP, не новый REQ (8.2).
+            # Исполнение не повторяется: отдаём кэш, а если задан
+            # replay_response — пересчитываем (дельта → SCREEN_FULL).
+            nak_seq = request.seq
+            if self._cached is None or self._last_seq != nak_seq:
+                return None
+            self.stats["replays"] += 1
+            if self._replay_response is not None:
+                reply_type, reply_payload = self._replay_response()
+                self._cached = framing.build_frame(
+                    reply_type, nak_seq, reply_payload
+                )
+            return self._cached
 
         if self._last_seq is not None and request.seq == self._last_seq:
             # Повтор REQ с тем же seq: ретрансляция мастера, отдаём кэш.
