@@ -341,15 +341,25 @@ class AlsaAudio(AudioDevice):
             ],
             stdin=subprocess.PIPE,
         )
-        self._arecord = subprocess.Popen(
-            [
-                "arecord", "-q",
-                "-D", capture_device,
-                "-f", "S16_LE", "-r", str(config.DEVICE_SAMPLE_RATE),
-                "-c", "1", "-t", "raw",
-            ],
-            stdout=subprocess.PIPE,
-        )
+        try:
+            self._arecord = subprocess.Popen(
+                [
+                    "arecord", "-q",
+                    "-D", capture_device,
+                    "-f", "S16_LE", "-r", str(config.DEVICE_SAMPLE_RATE),
+                    "-c", "1", "-t", "raw",
+                ],
+                stdout=subprocess.PIPE,
+            )
+        except Exception:
+            # aplay уже запущен и держит устройство воспроизведения; раз
+            # arecord не поднялся, объект AlsaAudio не будет создан и
+            # некому будет вызвать close() — глушим aplay сами, иначе
+            # следующий запуск застаёт устройство занятым осиротевшим
+            # процессом (docs/protocol.md 2.2).
+            self._aplay.terminate()
+            self._aplay.wait()
+            raise
         self._pending = bytearray()
         # Неблокирующий захват: контракт source() — None, если блока ещё нет.
         # Блокирующий read держал бы T_CARRIER/T_IDLE на длительности read,
