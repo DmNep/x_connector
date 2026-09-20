@@ -16,6 +16,7 @@ import threading
 from . import __version__, config
 from .audioio import open_audio
 from .client import Client
+from .devcheck import DeviceError, check_winmm, emit, explain_oserror, report_devices
 from .host import AgentHost
 from .shell import open_shell
 from .stick import StickError, list_removable, write_report, write_stick
@@ -124,13 +125,21 @@ def _open_transport(args: argparse.Namespace, role: str) -> tuple:
             kwargs["out_device"] = int(args.playback) if args.playback is not None else -1
         except ValueError:
             kwargs["out_device"] = -1
+        check_winmm(kwargs["in_device"], kwargs["out_device"])
     device = open_audio(args.backend, **kwargs)
     transport = AudioTransport(device.sink, device.source, config.PROBE)
     return device, transport
 
 
 def _cmd_client(args: argparse.Namespace) -> int:
-    device, transport = _open_transport(args, "client")
+    try:
+        device, transport = _open_transport(args, "client")
+    except DeviceError as exc:
+        emit(str(exc))
+        return 2
+    except OSError as exc:
+        emit(explain_oserror(exc))
+        return 2
     try:
         client = Client(transport.send, transport.receive, transport=transport)
         client.connect()
@@ -171,7 +180,14 @@ def _cmd_agent(args: argparse.Namespace) -> int:
             "На Windows: py -m xconn_channel loopback\n"
         )
         return 2
-    device, transport = _open_transport(args, "agent")
+    try:
+        device, transport = _open_transport(args, "agent")
+    except DeviceError as exc:
+        emit(str(exc))
+        return 2
+    except OSError as exc:
+        emit(explain_oserror(exc))
+        return 2
     argv = args.shell or None
     pty = open_shell(argv)
     host = AgentHost(
@@ -244,6 +260,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="корень флешки, например E:\\",
     )
     p_stick.set_defaults(func=_cmd_stick)
+
+    p_devices = sub.add_parser("devices", help="список входов и выходов")
+    p_devices.set_defaults(func=lambda _args: report_devices())
     return parser
 
 

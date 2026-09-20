@@ -1,10 +1,10 @@
 ---
 status: idle
 worktree: D:/projects/x_connector
-branch: wip/cursor-file-xfer
+branch: wip/cursor-device-errors
 task: ""
 hands_off: []
-updated: 2026-09-20T23:32+03:00
+updated: 2026-09-21T00:04+03:00
 ---
 
-Свободен. FILE_* на ветке `wip/cursor-file-xfer`.
+Свободен. Понятные ошибки устройств на `wip/cursor-device-errors`.
