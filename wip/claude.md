@@ -4,17 +4,14 @@ worktree: D:/projects/x_connector-claude
 branch: wip/claude-idle
 task: ""
 hands_off: []
-updated: 2026-09-21T01:35+03:00
+updated: 2026-09-21T02:20+03:00
 ---
 
-Свободен. Починил находку №10, последнюю из ревью (SlideGoertzel,
-EnergyGate, PreambleTracker в demodulator.py держали скользящее окно
-на list с pop(0)/del list[:k] — O(window) на каждый отсчёт на hot
-path) — перевёл все три на collections.deque, O(1) на отсчёт.
-xconn_channel/demodulator.py, коммит "Demodulator: back sliding
-windows with deque instead of list". Поведение не менялось — только
-структура данных; существующие TestEnergyGate/TestPreambleTracker/
-TestSlideGoertzel в test_modem.py уже гоняют данные далеко за одно
-окно, полный прогон зелёный (194/194). Все 10 находок ревью из этой
-сессии починены. Каталог Claude: `D:\projects\x_connector-claude`.
-Перед задачей заполнить поля и поставить `status: active`.
+Свободен. Добавил docs/demo/x_connector_demo.gif (иллюстративная
+анимация обмена: сигнал REQ/RESP/ACK + экран сервера) и генерирующий
+его docs/demo/make_demo_gif.py (Pillow, не входит в код канала).
+Замедлил в 2 раза по просьбе (SPEED_FACTOR=0.5). Коммит "docs/demo:
+add illustrative exchange demo GIF and its generator". Код
+xconn_channel/ не трогал. Каталог Claude:
+`D:\projects\x_connector-claude`. Перед задачей заполнить поля и
+поставить `status: active`.
