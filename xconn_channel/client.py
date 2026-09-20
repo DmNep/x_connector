@@ -47,10 +47,7 @@ class Client:
 
     def connect(self, desired_mode: str = config.DEFAULT_MODE):
         """HELO в probe, переход в согласованный режим, полный снимок."""
-        self.helo = handshake.client_handshake(self.master, desired_mode)
-        if self.transport is not None:
-            self.transport.set_mode(self.helo.mode)
-        self.master.mode = self.helo.mode
+        self.helo = handshake.client_handshake(self.master, desired_mode, self.transport)
         self.refresh()
         return self.helo
 
