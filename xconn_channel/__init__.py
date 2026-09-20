@@ -12,7 +12,7 @@
 Спецификация — docs/protocol.md, константы — config.py.
 """
 
-from . import config, crc, demodulator, framing, modulator, screen, session
+from . import config, crc, demodulator, framing, handshake, modulator, screen, session
 from .demodulator import Demodulator, decimate
 from .framing import (
     BitCollector,
@@ -22,6 +22,7 @@ from .framing import (
     parse_frame,
     to_bits,
 )
+from .handshake import HandshakeError, Helo, client_handshake, negotiate
 from .modulator import Modulator
 from .screen import Screen, ScreenError
 from .session import AgentSession, MasterSession, SessionError
@@ -32,18 +33,23 @@ __all__ = [
     "Demodulator",
     "Frame",
     "FrameError",
+    "HandshakeError",
+    "Helo",
     "MasterSession",
     "Modulator",
     "Screen",
     "ScreenError",
     "SessionError",
     "build_frame",
+    "client_handshake",
     "config",
     "crc",
     "decimate",
     "demodulator",
     "framing",
+    "handshake",
     "modulator",
+    "negotiate",
     "parse_frame",
     "screen",
     "session",

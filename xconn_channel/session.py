@@ -79,6 +79,20 @@ class MasterSession:
         self.stats = {"retries": 0, "naks": 0, "exchanges": 0, "timeouts": 0}
 
     @property
+    def mode(self) -> str:
+        return self._mode
+
+    @mode.setter
+    def mode(self, value: str) -> None:
+        """Смена режима сессии: рукопожатие поднимает probe -> base (8.5).
+
+        check_mode внутри ловит выключенный stretch: согласование не может
+        включить режим, запрещённый константой.
+        """
+        config.check_mode(value)
+        self._mode = value
+
+    @property
     def seq(self) -> int:
         return self._seq
 
