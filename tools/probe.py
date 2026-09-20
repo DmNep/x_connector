@@ -322,6 +322,10 @@ def build_live_stimulus(
 def slice_live_capture(captured: array.array, stim: dict) -> tuple[array.array, dict]:
     """Шум до фронта, тона — куски известной длины после onset."""
     onset = find_onset(captured)
+    if onset is None:
+        raise SystemExit(
+            "сигнал не обнаружен: проверьте кабель петли и --capture/--playback"
+        )
     noise = captured[:onset] if onset > 0 else captured[: stim["silence_len"]]
     if not noise:
         noise = array.array("h", bytes(2))

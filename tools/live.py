@@ -123,14 +123,17 @@ def play_and_capture(
     return captured
 
 
-def find_onset(samples, window: int = ONSET_WINDOW) -> int:
+def find_onset(samples, window: int = ONSET_WINDOW) -> int | None:
     """Индекс первого окна, где RMS ≥ четверти пика по записи.
 
-    Сдвигает разбор тонов на задержку карты. Если сигнала нет — 0.
+    Сдвигает разбор тонов на задержку карты. None — сигнала нет вообще
+    (запись короче окна или пик энергии нулевой): раньше это тоже
+    возвращало 0, неотличимо от «фронт реально на нулевом отсчёте»,
+    и мёртвая петля молча резалась так, будто калибровка удалась.
     """
     n = len(samples)
     if n < window:
-        return 0
+        return None
     step = max(1, window // 2)
     peak = 0.0
     levels = []
@@ -140,9 +143,9 @@ def find_onset(samples, window: int = ONSET_WINDOW) -> int:
         if level > peak:
             peak = level
     if peak <= 0.0:
-        return 0
+        return None
     thresh = peak * 0.25
     for i, level in levels:
         if level >= thresh:
             return i
-    return 0
+    return None  # недостижимо: peak — максимум levels, он сам проходит thresh
