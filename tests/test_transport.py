@@ -97,6 +97,28 @@ class TestTransportRoundtrip(unittest.TestCase):
         ta.send(raw)
         self.assertEqual(tb.receive(2.0), raw)
 
+    def test_corrupted_frame_surfaces_for_nak(self) -> None:
+        """CRC-битый, но читаемый по заголовку кадр не тонет молча (8.2).
+
+        NAK-путь без нового REQ работает только если сессия вообще узнаёт
+        о порче кадра. Раньше _feed() ронял FrameError демодулятора, и
+        приёмник просто молчал — от полного отсутствия сигнала это было
+        неотличимо.
+        """
+        ta, tb = self._pair(noise=0.0)
+        raw = framing.build_frame(config.CMD, 7, b"ls\n")
+        corrupted = bytearray(raw)
+        corrupted[5] ^= 0xFF  # портим payload, не трогая type/seq/len
+        from xconn_channel.modulator import Modulator
+
+        samples = Modulator(config.BASE).modulate(framing.to_bits(bytes(corrupted)))
+        got = tb._feed(samples)
+        self.assertIsNotNone(got, "испорченный кадр не должен тонуть молча")
+        with self.assertRaises(framing.FrameError) as ctx:
+            framing.parse_frame(got)
+        self.assertEqual(ctx.exception.code, config.NAK_CRC)
+        self.assertEqual(ctx.exception.seq, 7)
+
 
 class TestSessionOverAudio(unittest.TestCase):
     """Сессии мастер и агент целиком поверх аудио-транспорта."""

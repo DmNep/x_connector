@@ -169,8 +169,16 @@ class AudioTransport:
     def _feed(self, chunk) -> bytes | None:
         """Пропустить отсчёты в демодулятор. Байты кадра — при сборке.
 
-        FrameError не возвращается: кадр испорчен, NAK — решение сессии,
-        у неё есть seq и причина (docs/protocol.md 8.2). Приём продолжается.
+        Кадр с верной CRC восстанавливается из проверенных полей. Кадр,
+        испорченный уже после чтения заголовка (CRC, длина, тип), тоже
+        не глушится: FrameError несёт raw — те же байты, на которых
+        споткнулся разбор, — и они уходят наверх как обычный ответ.
+        Сессия сама вызовет framing.parse_frame() на них и получит тот же
+        FrameError с seq, чтобы отправить NAK (docs/protocol.md 8.2) —
+        без этого NAK-путь недостижим на реальном звуке: молчание после
+        порчи кадра неотличимо от полного отсутствия сигнала. Мусор без
+        читаемого заголовка (raw нет) по-прежнему отбрасывается молча
+        (8.5).
         """
         for event in self._dem.feed(chunk):
             if isinstance(event, Frame):
@@ -178,6 +186,9 @@ class AudioTransport:
                 # из проверенных полей — рассинхрон невозможен.
                 self._last_signal = None
                 return framing.build_frame(event.type, event.seq, event.payload)
+            if isinstance(event, FrameError) and event.raw is not None:
+                self._last_signal = None
+                return bytes(event.raw)
         if self._dem._gate.active:
             self._last_signal = self._clock()
         return None
