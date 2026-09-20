@@ -3,6 +3,7 @@
 Клиент — удобная программа для ИИ-агента на ноутбуке: отправить команду,
 напечатать сетку терминала. Агент на сервере слушает звуковую карту.
 loopback — оба конца в одном процессе, без кабеля, для отладки.
+stick — записать агент и установщик на USB-флешку.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from .audioio import open_audio
 from .client import Client
 from .host import AgentHost
 from .shell import open_shell
+from .stick import StickError, list_removable, write_report, write_stick
 from .transport import AudioTransport, SampleLink
 
 
@@ -128,6 +130,31 @@ def _cmd_client(args: argparse.Namespace) -> int:
         device.close()
 
 
+def _cmd_stick(args: argparse.Namespace) -> int:
+    dest = args.dest
+    if not dest:
+        drives = list_removable()
+        if drives:
+            sys.stderr.write("укажите флешку, съёмные диски:\n")
+            for letter in drives:
+                sys.stderr.write(f"  {letter}\n")
+        else:
+            sys.stderr.write(
+                "укажите путь: py -m xconn_channel stick E:\\\n"
+            )
+        return 2
+    try:
+        written = write_stick(dest)
+    except StickError as exc:
+        sys.stderr.write(str(exc) + "\n")
+        return 2
+    except OSError as exc:
+        sys.stderr.write(f"не записалось: {exc}\n")
+        return 2
+    write_report(written)
+    return 0
+
+
 def _cmd_agent(args: argparse.Namespace) -> int:
     if os.name == "nt" and args.backend not in ("wav",):
         sys.stderr.write(
@@ -158,7 +185,7 @@ def _cmd_agent(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="xconn_channel",
-        description="Звуковой канал x_connector: клиент, агент, loopback.",
+        description="Звуковой канал x_connector: клиент, агент, loopback, флешка.",
     )
     parser.add_argument(
         "-V", "--version", action="version", version=f"xconn_channel {__version__}"
@@ -199,6 +226,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_agent = sub.add_parser("agent", help="агент на сервере, ALSA hw:")
     add_common(p_agent)
     p_agent.set_defaults(func=_cmd_agent)
+
+    p_stick = sub.add_parser("stick", help="записать агент на USB-флешку")
+    p_stick.add_argument(
+        "dest",
+        nargs="?",
+        default=None,
+        help="корень флешки, например E:\\",
+    )
+    p_stick.set_defaults(func=_cmd_stick)
     return parser
 
 

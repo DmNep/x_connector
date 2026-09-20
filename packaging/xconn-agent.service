@@ -1,0 +1,20 @@
+[Unit]
+Description=x_connector audio console agent
+After=sound.target
+
+[Service]
+Type=simple
+User=xconn
+SupplementaryGroups=audio
+WorkingDirectory=/opt/x_connector
+EnvironmentFile=-/etc/default/xconn-agent
+ExecStart=/opt/x_connector/run-agent.sh
+Restart=on-failure
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
+# Агент не имеет права обращаться в сеть (AGENTS.md 3.2).
+IPAddressDeny=any
+
+[Install]
+WantedBy=multi-user.target
