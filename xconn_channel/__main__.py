@@ -113,6 +113,11 @@ def _open_transport(args: argparse.Namespace, role: str) -> tuple:
             kwargs["out_device"] = int(args.playback) if args.playback is not None else -1
         except ValueError:
             kwargs["out_device"] = -1
+    elif name == "wav":
+        # --capture/--playback переиспользуются как пути к WAV-файлам:
+        # вход и выход у WavAudio, а не устройство (docs/protocol.md 2).
+        kwargs["in_path"] = args.capture
+        kwargs["out_path"] = args.playback
     device = open_audio(args.backend, **kwargs)
     transport = AudioTransport(device.sink, device.source, config.PROBE)
     return device, transport
@@ -180,8 +185,16 @@ def build_parser() -> argparse.ArgumentParser:
             default=None,
             help="аудио-обвязка, по умолчанию по ОС",
         )
-        p.add_argument("--capture", default=None, help="вход: hw:N,M или номер winmm")
-        p.add_argument("--playback", default=None, help="выход: hw:N,M или номер winmm")
+        p.add_argument(
+            "--capture",
+            default=None,
+            help="вход: hw:N,M / номер winmm / путь к WAV-файлу при --backend wav",
+        )
+        p.add_argument(
+            "--playback",
+            default=None,
+            help="выход: hw:N,M / номер winmm / путь к WAV-файлу при --backend wav",
+        )
         p.add_argument(
             "--shell",
             nargs=argparse.REMAINDER,
