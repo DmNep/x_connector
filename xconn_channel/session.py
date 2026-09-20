@@ -1,0 +1,246 @@
+"""Цикл обмена полудуплекса: ретраи, идемпотентность, кэш ответа.
+
+docs/protocol.md 8. Клиент — единственный мастер: он инициирует каждый
+обмен, агент никогда не начинает передачу самостоятельно. Это исключает
+коллизии и делает поведение канала предсказуемым при отладке.
+
+Обмен:
+
+    клиент: REQ(seq) ──→ агент
+    клиент: ←── агент: RESP(seq)
+    клиент: ACK(seq) ──→ агент
+
+Обе стороны не знают ни звука, ни времени: транспорт — это два каллбэка,
+send(bytes) и receive(timeout_ms). Слой сессии гоняет по ним кадры,
+слой модема (modulator/demodulator) отвечает за звук. Так сессия
+проверяется целиком в памяти, без генерации сигнала.
+
+Роли:
+
+- MasterSession — сторона клиента: посылает REQ, ждёт RESP, шлёт ACK,
+  ретранслирует REQ по таймауту или NAK, не более MAX_RETRY раз.
+- AgentSession — сторона агента: исполняет запрос через handler, кэширует
+  последний ответ. Повторный кадр с тем же seq не исполняется повторно,
+  а отдаёт закешированный ответ — ретрансмиссия идемпотентна, потеря ACK
+  не приводит к двойному исполнению команды (docs/protocol.md 8.2).
+"""
+
+from __future__ import annotations
+
+import time
+
+from . import config, framing
+from .framing import Frame, FrameError
+
+
+class SessionError(Exception):
+    """Обмен не удался после MAX_RETRY ретраев. Счётчики сохранены."""
+
+    def __init__(self, message: str, attempts: int, seq: int) -> None:
+        super().__init__(message)
+        self.attempts = attempts
+        self.seq = seq
+
+
+class _Clock:
+    """Инъекция времени: time.monotonic в бою, управляемая в тестах."""
+
+    def __init__(self) -> None:
+        self._now = 0.0
+
+    def __call__(self) -> float:
+        return time.monotonic()
+
+    def advance(self, seconds: float) -> None:
+        self._now += seconds
+
+
+class FakeClock(_Clock):
+    def __call__(self) -> float:
+        return self._now
+
+
+class MasterSession:
+    """Сторона мастера: цикл REQ -> RESP -> ACK с ретраями (docs/protocol.md 8.2).
+
+    Таймауты двух видов, и это не избыточность (8.3): T_CARRIER ловит
+    «агент вообще молчит» — ответ не начался; T_IDLE ловит «ответ начался
+    и оборвался» — кадр прерван, ждать бессмысленно. Единый таймаут обязан
+    быть больше самого большого ответа (2.09 с при N=240) и обнаруживал бы
+    обрыв недопустимо медленно.
+    """
+
+    def __init__(self, send, receive, mode: str = config.DEFAULT_MODE, clock=None) -> None:
+        self._send = send
+        self._receive = receive
+        self._mode = mode
+        self._clock = clock or _Clock()
+        self._seq = 0
+        self.stats = {"retries": 0, "naks": 0, "exchanges": 0, "timeouts": 0}
+
+    @property
+    def seq(self) -> int:
+        return self._seq
+
+    def exchange(self, frame_type: int, payload: bytes = b"") -> Frame:
+        """Один обмен: REQ(seq) -> RESP(seq) -> ACK(seq).
+
+        Бросает SessionError после MAX_RETRY ретраев — ошибка наверх
+        с сохранением счётчиков, тихая деградация запрещена (8.2).
+        """
+        attempts = 0
+        reason = "нет ответа"
+        # 1 попытка + MAX_RETRY ретраев (docs/protocol.md 8.3).
+        while attempts < config.MAX_RETRY + 1:
+            attempts += 1
+            self._send(framing.build_frame(frame_type, self._seq, payload))
+            reply = self._await_reply(self._seq)
+
+            if isinstance(reply, Frame) and reply.type == config.NAK:
+                # Агент отверг наш REQ: ретранслируем немедленно, той же
+                # попыткой не считаем — это не наш сбой, а повреждение
+                # нашего кадра в тракте.
+                self.stats["naks"] += 1
+                reason = "REQ отвергнут агентом"
+                continue
+
+            if isinstance(reply, FrameError):
+                # Ответ пришёл испорченным: NAK — запрос повтора ответа,
+                # не подтверждение (docs/protocol.md 8.2). Агент
+                # ретранслирует ответ немедленно, ждём повтор.
+                self.stats["naks"] += 1
+                if reply.seq is not None:
+                    self._send(framing.nak(reply.seq, reply.code))
+                retry = self._await_reply(self._seq)
+                if (
+                    isinstance(retry, Frame)
+                    and retry.type != config.NAK
+                    and retry.seq == self._seq
+                ):
+                    # NAK в ответ на наш NAK — не ответ: агент отверг наш
+                    # RETR-кадр, следующая итерация ретранслирует REQ.
+                    return self._finish(retry)
+                reason = "ответ испорчен повторно"
+                self.stats["retries"] += 1
+                continue
+
+            if isinstance(reply, Frame) and reply.seq == self._seq:
+                return self._finish(reply)
+
+            # Таймаут или чужой seq: ретрансляция того же seq.
+            self.stats["timeouts"] += 1
+            self.stats["retries"] += 1
+            reason = "нет ответа (T_CARRIER/T_IDLE)"
+            continue
+
+        raise SessionError(
+            f"обмен seq={self._seq} не удался: {reason}",
+            attempts,
+            self._seq,
+        )
+
+    def _finish(self, reply: Frame) -> Frame:
+        """Завершение успешного обмена: ACK и продвижение seq."""
+        self._send(framing.ack(self._seq))
+        self._advance_seq()
+        self.stats["exchanges"] += 1
+        return reply
+
+    def _advance_seq(self) -> None:
+        self._seq = (self._seq + 1) % 256
+
+    def _await_reply(self, seq: int) -> Frame | FrameError | None:
+        """Ждать ответ до T_CARRIER, внутри — обрыв по T_IDLE."""
+        deadline = self._clock() + config.T_CARRIER_MS / 1000.0
+        idle = config.t_idle_ms(self._mode) / 1000.0
+        while self._clock() < deadline:
+            chunk = self._receive(deadline - self._clock())
+            if chunk:
+                return self._parse_chunk(chunk)
+            # receive вернул пусто: тракт молчит, таймаут исчерпан.
+            return None
+        return None
+
+    def _parse_chunk(self, chunk: bytes) -> Frame | FrameError | None:
+        """Разобрать принятые байты как один кадр ответа.
+
+        Транспорт сессии отдаёт кадры целиком: кадрирование по границам
+        слота — работа модемного слоя, здесь байты уже собраны.
+        """
+        try:
+            return framing.parse_frame(chunk)
+        except FrameError as error:
+            return error
+
+
+class AgentSession:
+    """Сторона агента: приём REQ, исполнение, ответ, идемпотентность.
+
+    Агент никогда не начинает передачу самостоятельно (docs/protocol.md 1).
+    На каждый принятый кадр — ровно один ответ: результат handler для нового
+    seq, закешированный ответ для повторного seq, NAK для испорченного.
+
+    Идемпотентность (8.2): агент хранит последний обработанный seq и кэш
+    последнего ответа. Повторный кадр с тем же seq не исполняется повторно,
+    а заново отдаёт закешированный ответ. Потеря ACK не приводит к двойному
+    исполнению команды — команда уже могла изменить состояние сервера.
+    """
+
+    def __init__(self, send, receive, handler) -> None:
+        """handler(frame: Frame) -> (frame_type, payload) ответа."""
+        self._send = send
+        self._receive = receive
+        self._handler = handler
+        self._last_seq: int | None = None
+        self._cached: bytes | None = None
+        self.stats = {"frames": 0, "replays": 0, "naks": 0, "rejected": 0}
+
+    def poll(self, timeout_ms: float) -> bool:
+        """Одна итерация ожидания: принять кадр, ответить. True — был обмен.
+
+        poll() не блокируется дольше timeout_ms и возвращает управление:
+        агент между кадрами занят терминалом (docs/protocol.md 9).
+        """
+        chunk = self._receive(timeout_ms)
+        if not chunk:
+            return False
+        self.stats["frames"] += 1
+        self._answer(chunk)
+        return True
+
+    def _answer(self, chunk: bytes) -> None:
+        reply = self._parse(chunk)
+        if reply is None:
+            return
+        self._send(reply)
+
+    def _parse(self, chunk: bytes) -> bytes | None:
+        try:
+            request = framing.parse_frame(chunk)
+        except FrameError as error:
+            # Кадр испорчен: NAK, если seq читается. Мусор без заголовка —
+            # молча (8.5: агент не отвечает на кадр с неверной CRC... но
+            # NAK на читаемый заголовок ускоряет ретрансляцию мастера).
+            self.stats["naks"] += 1
+            if error.seq is None:
+                self.stats["rejected"] += 1
+                return None
+            return framing.nak(error.seq, error.code)
+
+        if request.type in (config.ACK, config.NAK):
+            # ACK/NAK всегда идут в ответ на принятый кадр, самостоятельно
+            # не отправляются (8.2). Наш ACK от мастера — не запрос,
+            # ответа не требует.
+            return None
+
+        if self._last_seq is not None and request.seq == self._last_seq:
+            # Повтор REQ с тем же seq: ретрансляция мастера, отдаём кэш.
+            self.stats["replays"] += 1
+            assert self._cached is not None
+            return self._cached
+
+        reply_type, reply_payload = self._handler(request)
+        reply = framing.build_frame(reply_type, request.seq, reply_payload)
+        self._last_seq = request.seq
+        self._cached = reply
+        return reply

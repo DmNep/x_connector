@@ -18,11 +18,20 @@ from .crc import crc16
 
 
 class FrameError(Exception):
-    """Кадр принят, но неверен. Причина — в code, она уходит в NAK."""
+    """Кадр принят, но неверен. Причина — в code, она уходит в NAK.
 
-    def __init__(self, message: str, code: int = config.NAK_CRC) -> None:
+    seq — номер отвергнутого кадра, если заголовок успел прочитаться.
+    Нужен для NAK: подтверждать отвержение без seq бессмысленно, мастер
+    не узнает, что ретранслировать. None — заголовок не читается, кадр
+    не идентифицирован, отвечать нечем (docs/protocol.md 8.5: молча).
+    """
+
+    def __init__(
+        self, message: str, code: int = config.NAK_CRC, seq: int | None = None
+    ) -> None:
         super().__init__(message)
         self.code = code
+        self.seq = seq
 
 
 @dataclass(frozen=True)
@@ -99,7 +108,9 @@ def parse_frame(data: bytes | bytearray) -> Frame:
 
     if length > config.MAX_PAYLOAD:
         raise FrameError(
-            f"длина payload {length} превышает {config.MAX_PAYLOAD}", config.NAK_LENGTH
+            f"длина payload {length} превышает {config.MAX_PAYLOAD}",
+            config.NAK_LENGTH,
+            seq,
         )
 
     expected = 5 + length + 2
@@ -107,6 +118,7 @@ def parse_frame(data: bytes | bytearray) -> Frame:
         raise FrameError(
             f"длина кадра {len(data)} не совпадает с ожидаемой {expected}",
             config.NAK_LENGTH,
+            seq,
         )
 
     payload = bytes(data[5 : 5 + length])
@@ -115,7 +127,11 @@ def parse_frame(data: bytes | bytearray) -> Frame:
     computed = crc16(body)
 
     if received != computed:
-        raise FrameError(f"CRC: получено {received:#06x}, вычислено {computed:#06x}")
+        raise FrameError(
+            f"CRC: получено {received:#06x}, вычислено {computed:#06x}",
+            config.NAK_CRC,
+            seq,
+        )
 
     if frame_type not in config.FRAME_TYPES:
         raise FrameError(f"неизвестный тип кадра {frame_type:#04x}", config.NAK_TYPE)
@@ -280,10 +296,12 @@ class BitCollector:
         if len(self._bytes) == 5:
             length = (self._bytes[3] << 8) | self._bytes[4]
             if length > config.MAX_PAYLOAD:
+                seq = self._bytes[2]
                 self._end_frame()
                 return FrameError(
                     f"длина payload {length} превышает {config.MAX_PAYLOAD}",
                     config.NAK_LENGTH,
+                    seq,
                 )
             self._expected = 5 + length + 2
             return None
