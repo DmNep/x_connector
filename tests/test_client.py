@@ -73,6 +73,24 @@ class TestClientOverBytes(unittest.TestCase):
         reply = client.ping()
         self.assertEqual(reply.type, config.PONG)
 
+    def test_apply_corrupted_full_snapshot_does_not_crash(self) -> None:
+        """Испорченный на уровне разбора SCREEN_FULL не должен ронять клиент (6.2).
+
+        CRC кадра уже проверена уровнем ниже — сюда payload доходит
+        только с версией/багом разбора (курсор вне сетки), не с порчей в
+        тракте. Симметрично дельте: клиент просит снимок заново.
+        """
+        import zlib
+
+        client, _, _ = self._pair()
+        client.connect()
+        bogus = zlib.compress(bytes((1, 1, 5, 5, 0)) + b"x")  # курсор вне 1x1
+        reply = framing.Frame(type=config.SCREEN_FULL, seq=99, payload=bogus)
+        result = client._apply(reply)
+        self.assertIsNotNone(result)
+        self.assertIn("$ ", client.render())
+        self.assertNotEqual(client.base_seq, 99, "битый снимок не должен приняться как есть")
+
 
 class TestClientOverAudio(unittest.TestCase):
     """Клиент и хост поверх SampleLink, как два конца кабеля."""

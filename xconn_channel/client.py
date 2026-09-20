@@ -97,7 +97,14 @@ class Client:
 
     def _apply(self, reply: Frame) -> Screen:
         if reply.type == config.SCREEN_FULL:
-            self.screen = screen.parse_full(reply.payload)
+            try:
+                self.screen = screen.parse_full(reply.payload)
+            except ScreenError:
+                # Тот же случай, что и у дельты ниже: разбор не сошёлся
+                # (версия/баг агента, не порча в тракте — CRC кадра уже
+                # проверена) — не ронять клиент, просить снимок ещё раз
+                # (docs/protocol.md 6.2).
+                return self.refresh()
             self.base_seq = reply.seq
             return self.screen
         if reply.type == config.SCREEN_DELTA:
