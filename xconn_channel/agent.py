@@ -148,7 +148,16 @@ class AgentCore:
         состояние сервера. Клиент потерял дельту, и дельта от старой базы
         могла не подойти: повтор обязан быть самодостаточным.
         """
-        return config.SCREEN_FULL, screen.serialize_full(self._vt.screen)
+        try:
+            return config.SCREEN_FULL, screen.serialize_full(self._vt.screen)
+        except ValueError:
+            # Экран несжимаем даже целиком: сегментации снимков ещё нет
+            # (docs/protocol.md 7), деградировать дальше некуда — NAK,
+            # а не необработанное исключение наружу (AGENTS.md 3.2: агент
+            # обязан работать без присмотра). seq в payload недоступен —
+            # callback без аргументов; клиент решает по seq заголовка,
+            # который проставляет вызывающий сессии, а не по payload.
+            return config.NAK, bytes((0, config.NAK_LENGTH))
 
     # --- снимки --------------------------------------------------------------------
 
@@ -160,12 +169,20 @@ class AgentCore:
         """
         current = self._vt.screen
         if self._base is None:
+            try:
+                payload = screen.serialize_full(current)
+            except ValueError:
+                # Тот же случай, что и в делегировании ниже: даже полный
+                # снимок не влезает в MAX_PAYLOAD (несжимаемый экран).
+                # База не тронута, дальше деградировать некуда — NAK
+                # вместо падения процесса (AGENTS.md 3.2).
+                return config.NAK, bytes((seq, config.NAK_LENGTH))
             self._base = Screen(current.rows, current.cols)
             self._base.cells[:] = current.cells
             self._base.flags = current.flags
             self._base_seq = seq
             self.stats["fulls"] += 1
-            return config.SCREEN_FULL, screen.serialize_full(current)
+            return config.SCREEN_FULL, payload
 
         changed = self._base.changed_rows(current)
         try:
