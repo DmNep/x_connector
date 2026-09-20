@@ -14,6 +14,7 @@ from . import config, handshake, screen
 from .framing import Frame
 from .screen import Screen, ScreenError
 from .session import MasterSession, SessionError
+from .transfer import crc32, encode_close, encode_data, encode_open, iter_chunks, sanitize_name
 
 
 # Имена ключей для CLI и ИИ-агента. Значения — байты, как с клавиатуры VT100.
@@ -87,6 +88,24 @@ class Client:
         reply = self.master.exchange(config.PING, bytes((config.PING_FULL,)))
         return self._apply(reply)
 
+    def put(self, local_path: str, remote_name: str | None = None) -> Screen:
+        """Файл на агент: OPEN / DATA / CLOSE (docs/protocol.md 7)."""
+        from pathlib import Path
+
+        path = Path(local_path)
+        data = path.read_bytes()
+        name = sanitize_name(remote_name or path.name)
+        digest = crc32(data)
+        reply = self.master.exchange(
+            config.FILE_OPEN, encode_open(name, len(data), digest)
+        )
+        self._apply(reply)
+        for offset, chunk in iter_chunks(data):
+            reply = self.master.exchange(config.FILE_DATA, encode_data(offset, chunk))
+            self._apply(reply)
+        reply = self.master.exchange(config.FILE_CLOSE, encode_close(digest))
+        return self._apply(reply)
+
     def render(self) -> str:
         """Сетка как текст для печати. Пустой экран — пустая строка."""
         if self.screen is None:
@@ -114,6 +133,10 @@ class Client:
         if reply.type == config.PONG:
             if self.screen is None:
                 raise SessionError("PONG без экрана после connect", 1, reply.seq)
+            return self.screen
+        if reply.type == config.NOTE:
+            if self.screen is None:
+                raise SessionError("NOTE без экрана после connect", 1, reply.seq)
             return self.screen
         if reply.type == config.NAK:
             raise SessionError(

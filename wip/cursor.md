@@ -1,10 +1,10 @@
 ---
 status: idle
 worktree: D:/projects/x_connector
-branch: wip/cursor-stick
+branch: wip/cursor-file-xfer
 task: ""
 hands_off: []
-updated: 2026-09-20T23:28+03:00
+updated: 2026-09-20T23:32+03:00
 ---
 
-Свободен. Установщик на флешку на ветке `wip/cursor-stick`.
+Свободен. FILE_* на ветке `wip/cursor-file-xfer`.

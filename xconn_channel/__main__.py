@@ -51,6 +51,15 @@ def _run_commands(client: Client, commands: list[str], repl: bool) -> int:
                     break
                 if line.startswith(".key "):
                     client.key(line[5:].strip())
+                elif line.startswith(".put "):
+                    parts = line.split()
+                    if len(parts) < 2:
+                        print("usage: .put LOCAL [NAME]")
+                        continue
+                    remote = parts[2] if len(parts) > 2 else None
+                    client.put(parts[1], remote)
+                    print("put ok")
+                    continue
                 elif line.startswith(".ping"):
                     client.ping()
                     print("pong")

@@ -6,7 +6,9 @@
 from __future__ import annotations
 
 import time
+import tempfile
 import unittest
+from pathlib import Path
 
 from xconn_channel import config, framing
 from xconn_channel.client import KEYS, Client
@@ -17,7 +19,7 @@ from test_agent import FakePty
 
 
 class TestClientOverBytes(unittest.TestCase):
-    def _pair(self):
+    def _pair(self, file_root=None):
         import collections
 
         to_agent: collections.deque = collections.deque()
@@ -30,6 +32,7 @@ class TestClientOverBytes(unittest.TestCase):
             pty,
             pump_wait_ms=0,
             pump_idle_ms=0,
+            file_root=file_root,
         )
 
         def master_receive(timeout=0.0):
@@ -72,6 +75,17 @@ class TestClientOverBytes(unittest.TestCase):
         client.connect()
         reply = client.ping()
         self.assertEqual(reply.type, config.PONG)
+
+    def test_put_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            inbox = Path(tmp) / "inbox"
+            src = Path(tmp) / "vpn.conf"
+            src.write_bytes(b"hello-xconn\n")
+            client, host, _ = self._pair(file_root=inbox)
+            client.connect()
+            client.put(str(src), "vpn.conf")
+            self.assertEqual((inbox / "vpn.conf").read_bytes(), b"hello-xconn\n")
+            self.assertEqual(host.core.stats["files"], 1)
 
 
 class TestClientOverAudio(unittest.TestCase):

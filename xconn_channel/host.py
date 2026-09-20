@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 from . import config, handshake
 from .agent import AgentCore
@@ -32,9 +33,12 @@ class AgentHost:
         supported=None,
         pump_wait_ms: float = 250,
         pump_idle_ms: float = 80,
+        file_root=None,
     ) -> None:
         self.pty = pty
         self.transport = transport
+        if file_root is None:
+            file_root = Path.cwd() / "inbox"
         self.core = AgentCore(
             pty.write,
             pty.read,
@@ -42,6 +46,7 @@ class AgentHost:
             cols,
             pump_wait_ms=pump_wait_ms,
             pump_idle_ms=pump_idle_ms,
+            file_root=file_root,
         )
         if supported is None:
             supported = (config.PROBE, config.BASE)
