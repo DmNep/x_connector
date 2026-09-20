@@ -3,6 +3,7 @@
 Клиент — удобная программа для ИИ-агента на ноутбуке: отправить команду,
 напечатать сетку терминала. Агент на сервере слушает звуковую карту.
 loopback — оба конца в одном процессе, без кабеля, для отладки.
+stick — записать агент и установщик на USB-флешку.
 """
 
 from __future__ import annotations
@@ -15,8 +16,10 @@ import threading
 from . import __version__, config
 from .audioio import open_audio
 from .client import Client
+from .devcheck import DeviceError, check_winmm, emit, explain_oserror, report_devices
 from .host import AgentHost
 from .shell import open_shell
+from .stick import StickError, list_removable, write_report, write_stick
 from .transport import AudioTransport, SampleLink
 
 
@@ -49,6 +52,15 @@ def _run_commands(client: Client, commands: list[str], repl: bool) -> int:
                     break
                 if line.startswith(".key "):
                     client.key(line[5:].strip())
+                elif line.startswith(".put "):
+                    parts = line.split()
+                    if len(parts) < 2:
+                        print("usage: .put LOCAL [NAME]")
+                        continue
+                    remote = parts[2] if len(parts) > 2 else None
+                    client.put(parts[1], remote)
+                    print("put ok")
+                    continue
                 elif line.startswith(".ping"):
                     client.ping()
                     print("pong")
@@ -113,6 +125,7 @@ def _open_transport(args: argparse.Namespace, role: str) -> tuple:
             kwargs["out_device"] = int(args.playback) if args.playback is not None else -1
         except ValueError:
             kwargs["out_device"] = -1
+        check_winmm(kwargs["in_device"], kwargs["out_device"])
     elif name == "wav":
         # --capture/--playback переиспользуются как пути к WAV-файлам:
         # вход и выход у WavAudio, а не устройство (docs/protocol.md 2).
@@ -124,13 +137,45 @@ def _open_transport(args: argparse.Namespace, role: str) -> tuple:
 
 
 def _cmd_client(args: argparse.Namespace) -> int:
-    device, transport = _open_transport(args, "client")
+    try:
+        device, transport = _open_transport(args, "client")
+    except DeviceError as exc:
+        emit(str(exc))
+        return 2
+    except OSError as exc:
+        emit(explain_oserror(exc))
+        return 2
     try:
         client = Client(transport.send, transport.receive, transport=transport)
         client.connect()
         return _run_commands(client, args.command, args.repl)
     finally:
         device.close()
+
+
+def _cmd_stick(args: argparse.Namespace) -> int:
+    dest = args.dest
+    if not dest:
+        drives = list_removable()
+        if drives:
+            sys.stderr.write("укажите флешку, съёмные диски:\n")
+            for letter in drives:
+                sys.stderr.write(f"  {letter}\n")
+        else:
+            sys.stderr.write(
+                "укажите путь: py -m xconn_channel stick E:\\\n"
+            )
+        return 2
+    try:
+        written = write_stick(dest)
+    except StickError as exc:
+        sys.stderr.write(str(exc) + "\n")
+        return 2
+    except OSError as exc:
+        sys.stderr.write(f"не записалось: {exc}\n")
+        return 2
+    write_report(written)
+    return 0
 
 
 def _cmd_agent(args: argparse.Namespace) -> int:
@@ -140,7 +185,14 @@ def _cmd_agent(args: argparse.Namespace) -> int:
             "На Windows: py -m xconn_channel loopback\n"
         )
         return 2
-    device, transport = _open_transport(args, "agent")
+    try:
+        device, transport = _open_transport(args, "agent")
+    except DeviceError as exc:
+        emit(str(exc))
+        return 2
+    except OSError as exc:
+        emit(explain_oserror(exc))
+        return 2
     argv = args.shell or None
     pty = open_shell(argv)
     host = AgentHost(
@@ -163,7 +215,7 @@ def _cmd_agent(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="xconn_channel",
-        description="Звуковой канал x_connector: клиент, агент, loopback.",
+        description="Звуковой канал x_connector: клиент, агент, loopback, флешка.",
     )
     parser.add_argument(
         "-V", "--version", action="version", version=f"xconn_channel {__version__}"
@@ -212,6 +264,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_agent = sub.add_parser("agent", help="агент на сервере, ALSA hw:")
     add_common(p_agent)
     p_agent.set_defaults(func=_cmd_agent)
+
+    p_stick = sub.add_parser("stick", help="записать агент на USB-флешку")
+    p_stick.add_argument(
+        "dest",
+        nargs="?",
+        default=None,
+        help="корень флешки, например E:\\",
+    )
+    p_stick.set_defaults(func=_cmd_stick)
+
+    p_devices = sub.add_parser("devices", help="список входов и выходов")
+    p_devices.set_defaults(func=lambda _args: report_devices())
     return parser
 
 

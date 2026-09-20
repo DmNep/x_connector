@@ -64,6 +64,7 @@ py -m xconn_channel loopback --repl
 | `tests/` | unittest без железа |
 
 ```text
+py -m xconn_channel devices
 py -m xconn_channel client --repl
 py -m xconn_channel agent
 py tools/probe.py --selftest

@@ -1,0 +1,2 @@
+packaging/*.sh text eol=lf
+packaging/*.service text eol=lf

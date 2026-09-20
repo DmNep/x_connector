@@ -24,11 +24,13 @@ master-сторону PTY, вывод PTY разбирается эмулято�
 
 from __future__ import annotations
 
+import os
 import time
 
-from . import config, framing, screen
+from . import config, screen, transfer
 from .framing import Frame
 from .screen import Screen
+from .transfer import TransferError
 from .vt100 import Vt100
 
 
@@ -43,6 +45,7 @@ class AgentCore:
         cols=None,
         pump_wait_ms: float = 0,
         pump_idle_ms: float = 0,
+        file_root=None,
     ) -> None:
         self._write_pty = write_pty
         self._read_pty = read_pty
@@ -57,7 +60,17 @@ class AgentCore:
         # idle — тишина после последнего, после которой снимок стабилен.
         self._pump_wait_ms = pump_wait_ms
         self._pump_idle_ms = pump_idle_ms
-        self.stats = {"cmds": 0, "keys": 0, "resizes": 0, "fulls": 0, "deltas": 0}
+        self._file_root = file_root
+        self._xfer = None
+        self._last_reply: tuple[int, bytes] | None = None
+        self.stats = {
+            "cmds": 0,
+            "keys": 0,
+            "resizes": 0,
+            "fulls": 0,
+            "deltas": 0,
+            "files": 0,
+        }
 
     @property
     def screen(self) -> Screen:
@@ -107,7 +120,12 @@ class AgentCore:
     # --- обработка кадров --------------------------------------------------------
 
     def handle(self, frame: Frame) -> tuple[int, bytes]:
-        """Handler для AgentSession: CMD/KEY/RESIZE -> снимок экрана."""
+        """Handler для AgentSession: CMD/KEY/RESIZE/FILE_* -> ответ."""
+        reply = self._handle(frame)
+        self._last_reply = reply
+        return reply
+
+    def _handle(self, frame: Frame) -> tuple[int, bytes]:
         if frame.type == config.CMD:
             self.stats["cmds"] += 1
             self._write_pty(frame.payload)
@@ -139,15 +157,75 @@ class AgentCore:
                 self.pump()
                 return self._snapshot(frame.seq)
             return config.PONG, b""
+        if frame.type in (config.FILE_OPEN, config.FILE_DATA, config.FILE_CLOSE):
+            return self._handle_file(frame)
         return config.NAK, bytes((frame.seq, config.NAK_TYPE))
 
-    def replay(self) -> tuple[int, bytes]:
-        """Ответ на повторный REQ: полный снимок (docs/protocol.md 8.2, 6.2).
+    def _handle_file(self, frame: Frame) -> tuple[int, bytes]:
+        """FILE_OPEN/DATA/CLOSE → NOTE или NAK (docs/protocol.md 7)."""
+        if self._file_root is None:
+            return config.NAK, bytes((frame.seq, config.NAK_STATE))
+        try:
+            if frame.type == config.FILE_OPEN:
+                return self._file_open(frame)
+            if frame.type == config.FILE_DATA:
+                return self._file_data(frame)
+            return self._file_close(frame)
+        except TransferError:
+            return config.NAK, bytes((frame.seq, config.NAK_LENGTH))
 
-        Команда в PTY не повторяется — она уже исполнена и могла изменить
-        состояние сервера. Клиент потерял дельту, и дельта от старой базы
-        могла не подойти: повтор обязан быть самодостаточным.
+    def _file_open(self, frame: Frame) -> tuple[int, bytes]:
+        name, size, digest = transfer.decode_open(frame.payload)
+        os.makedirs(self._file_root, exist_ok=True)
+        self._xfer = {
+            "name": name,
+            "size": size,
+            "digest": digest,
+            "buf": bytearray(size),
+            "got": bytearray(size),
+            "path": transfer.dest_path(self._file_root, name),
+        }
+        return config.NOTE, bytes((config.NOTE_OK,))
+
+    def _file_data(self, frame: Frame) -> tuple[int, bytes]:
+        if self._xfer is None:
+            return config.NAK, bytes((frame.seq, config.NAK_STATE))
+        offset, chunk = transfer.decode_data(frame.payload)
+        end = offset + len(chunk)
+        if end > self._xfer["size"]:
+            return config.NAK, bytes((frame.seq, config.NAK_LENGTH))
+        self._xfer["buf"][offset:end] = chunk
+        self._xfer["got"][offset:end] = b"\x01" * len(chunk)
+        return config.NOTE, bytes((config.NOTE_OK,))
+
+    def _file_close(self, frame: Frame) -> tuple[int, bytes]:
+        if self._xfer is None:
+            return config.NAK, bytes((frame.seq, config.NAK_STATE))
+        digest = transfer.decode_close(frame.payload)
+        xfer = self._xfer
+        if xfer["size"] and (0 in xfer["got"]):
+            self._xfer = None
+            return config.NAK, bytes((frame.seq, config.NAK_STATE))
+        actual = transfer.crc32(bytes(xfer["buf"]))
+        if digest != xfer["digest"] or actual != digest:
+            self._xfer = None
+            return config.NAK, bytes((frame.seq, config.NAK_STATE))
+        xfer["path"].write_bytes(bytes(xfer["buf"]))
+        self._xfer = None
+        self.stats["files"] += 1
+        return config.NOTE, bytes((config.NOTE_OK,))
+
+    def replay(self) -> tuple[int, bytes]:
+        """Ответ на повторный REQ: полный снимок, кроме FILE/PONG/NAK.
+
+        Команда в PTY не повторяется. Клиент потерял дельту — повтор
+        экрана обязан быть SCREEN_FULL (8.2, 6.2). Повтор FILE_* и PING
+        отдаёт тот же NOTE/PONG/NAK, иначе клиент примет сетку за статус.
         """
+        if self._last_reply is not None:
+            rtype = self._last_reply[0]
+            if rtype not in (config.SCREEN_FULL, config.SCREEN_DELTA):
+                return self._last_reply
         try:
             return config.SCREEN_FULL, screen.serialize_full(self._vt.screen)
         except ValueError:

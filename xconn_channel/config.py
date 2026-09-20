@@ -145,6 +145,15 @@ FILE_OPEN = 0x30
 FILE_DATA = 0x31
 FILE_CLOSE = 0x32
 
+# Имя в FILE_OPEN — 64 байта UTF-8 с NUL-дополнением (docs/protocol.md 7).
+FILE_NAME_BYTES = 64
+# Заголовок FILE_DATA: offset(4) + length(2). Кусок = MAX_PAYLOAD − 6.
+FILE_DATA_HDR = 6
+FILE_CHUNK = MAX_PAYLOAD - FILE_DATA_HDR
+FILE_MAX_BYTES = 256 * 1024
+# NOTE: успешный FILE_* (один байт).
+NOTE_OK = 0x00
+
 FRAME_TYPES: dict[int, str] = {
     ACK: "ACK",
     NAK: "NAK",
