@@ -4,16 +4,15 @@ worktree: D:/projects/x_connector-claude
 branch: wip/claude-idle
 task: ""
 hands_off: []
-updated: 2026-09-20T23:40+03:00
+updated: 2026-09-20T23:55+03:00
 ---
 
-Свободен. Починил находку №3 из ревью (AgentHost.handle() звал
-pty.resize() раньше проверки границ 1..255 из AgentCore.handle,
-docs/protocol.md 9) — теперь границы проверяются до вызова
-pty.resize(). xconn_channel/host.py, tests/test_agent.py (FakePty.resize
-spy), tests/test_client.py (TestHostResize), коммит "Host: validate
-RESIZE bounds before touching the real PTY". Тесты зелёные (186/186).
-Находки №1 (FrameError) и №2 (serialize_full) починены ранее в этой
-сессии. Остались находки 4–10. Каталог Claude:
-`D:\projects\x_connector-claude`. Перед задачей заполнить поля и
-поставить `status: active`.
+Свободен. Починил находку №4 из ревью (Client._apply не перехватывал
+ScreenError у screen.parse_full, в отличие от parse_delta рядом,
+docs/protocol.md 6.2) — теперь SCREEN_FULL получает то же
+try/except -> refresh(). xconn_channel/client.py, tests/test_client.py
+(test_apply_corrupted_full_snapshot_does_not_crash), коммит "Client:
+recover from a malformed SCREEN_FULL instead of crashing". Тесты
+зелёные (187/187). Находки №1–3 починены ранее в этой сессии. Остались
+5–10. Каталог Claude: `D:\projects\x_connector-claude`. Перед задачей
+заполнить поля и поставить `status: active`.
