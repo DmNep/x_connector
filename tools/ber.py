@@ -27,6 +27,8 @@ from xconn_channel.demodulator import demodulate_frame, gate_level_from_noise, r
 from xconn_channel.framing import Frame, FrameError
 from xconn_channel.modulator import Modulator
 
+from tools.live import add_device_args, open_live_device, play_and_capture
+
 # Кадр «.CMD с 40 байтами — типичная команда из protocol.md 8.4.
 PAYLOAD_BYTES = 40
 DEFAULT_FRAMES = 8
@@ -91,21 +93,20 @@ def snr_db(signal_rms: float, noise_sigma: float) -> float:
     return 20.0 * math.log10(signal_rms / noise_sigma)
 
 
-def measure_train(
+def score_capture(
     mode: str,
-    n_frames: int = DEFAULT_FRAMES,
-    payload_len: int = PAYLOAD_BYTES,
+    payloads: list[bytes],
+    samples: array.array,
     noise_sigma: float = 0.0,
-    seed: int = 1,
 ) -> dict:
-    """Один прогон: N кадров, BER по полезным битам payload, FER по кадрам."""
-    payloads = [prbs_payload(payload_len, seed + seq) for seq in range(n_frames)]
-    samples = modulate_train(mode, payloads)
-    noisy = add_noise(samples, noise_sigma, seed)
+    """Разобрать уже снятые отсчёты: BER по payload, FER по кадрам."""
+    n_frames = len(payloads)
+    payload_len = len(payloads[0]) if payloads else 0
     lead = round(LEAD_MS * config.SAMPLE_RATE / 1000.0)
-    noise_floor = rms_level(noisy[: max(1, lead)])
+    head = samples[: max(1, min(lead, len(samples)))]
+    noise_floor = rms_level(head)
     gate = gate_level_from_noise(noise_floor) if noise_floor else 512.0
-    results = demodulate_frame(noisy, mode, gate)
+    results = demodulate_frame(samples, mode, gate)
 
     by_seq: dict[int, Frame] = {}
     crc_fail = 0
@@ -127,7 +128,8 @@ def measure_train(
         ok += 1
         errors += bit_errors(expected, got.payload)
 
-    signal_rms = rms_level(samples[lead:]) if len(samples) > lead else 0.0
+    body = samples[lead:] if len(samples) > lead else samples
+    signal_rms = rms_level(body)
     fer = 1.0 - (ok / n_frames) if n_frames else 0.0
     ber = errors / payload_bits if payload_bits else 0.0
     return {
@@ -145,6 +147,35 @@ def measure_train(
         "snr_db": snr_db(signal_rms, noise_sigma),
         "gate_level": gate,
     }
+
+
+def measure_train(
+    mode: str,
+    n_frames: int = DEFAULT_FRAMES,
+    payload_len: int = PAYLOAD_BYTES,
+    noise_sigma: float = 0.0,
+    seed: int = 1,
+) -> dict:
+    """DSP-прогон: N кадров через модулятор, опционально шум."""
+    payloads = [prbs_payload(payload_len, seed + seq) for seq in range(n_frames)]
+    samples = add_noise(modulate_train(mode, payloads), noise_sigma, seed)
+    return score_capture(mode, payloads, samples, noise_sigma)
+
+
+def measure_live(
+    device,
+    mode: str,
+    n_frames: int = DEFAULT_FRAMES,
+    payload_len: int = PAYLOAD_BYTES,
+    seed: int = 1,
+) -> dict:
+    """Проиграть поезд кадров в карту и посчитать BER по снятому входу."""
+    payloads = [prbs_payload(payload_len, seed + seq) for seq in range(n_frames)]
+    played = modulate_train(mode, payloads)
+    captured = play_and_capture(device, played)
+    if not captured:
+        raise SystemExit("вход пуст: проверьте кабель петли и --capture/--playback")
+    return score_capture(mode, payloads, captured, noise_sigma=0.0)
 
 
 def _fmt_ratio(value: float) -> str:
@@ -241,7 +272,22 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="один режим; по умолчанию probe и base",
     )
+    add_device_args(parser)
     return parser
+
+
+def _cmd_live(args: argparse.Namespace) -> int:
+    modes = (args.mode,) if args.mode else (config.PROBE, config.BASE)
+    device = open_live_device(args)
+    try:
+        rows = [
+            measure_live(device, mode, n_frames=args.frames)
+            for mode in modes
+        ]
+    finally:
+        device.close()
+    _write_report(format_report(rows))
+    return 0 if selftest_ok(rows) else 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -250,6 +296,8 @@ def main(argv: list[str] | None = None) -> int:
         rows = run_selftest()
         _write_report(format_report(rows))
         return 0 if selftest_ok(rows) else 1
+    if args.live:
+        return _cmd_live(args)
     modes = (args.mode,) if args.mode else (config.PROBE, config.BASE)
     rows = [
         measure_train(mode, n_frames=args.frames, noise_sigma=args.noise)

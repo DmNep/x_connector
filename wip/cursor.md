@@ -1,10 +1,10 @@
 ---
 status: idle
 worktree: D:/projects/x_connector
-branch: wip/cursor-ber
+branch: wip/cursor-live-audio
 task: ""
 hands_off: []
-updated: 2026-09-20T23:00+03:00
+updated: 2026-09-20T23:15+03:00
 ---
 
-Свободен. Замер BER `tools/ber.py` на ветке `wip/cursor-ber`.
+Свободен. Живой звук `--live` в probe/ber на `wip/cursor-live-audio`.

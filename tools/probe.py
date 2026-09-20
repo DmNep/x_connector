@@ -31,6 +31,8 @@ if _ROOT not in sys.path:
 from xconn_channel import config
 from xconn_channel.demodulator import gate_level_from_noise, rms_level
 
+from tools.live import add_device_args, find_onset, open_live_device, play_and_capture
+
 SWEEP_START_HZ = 300
 SWEEP_STOP_HZ = 3400
 SWEEP_STEP_HZ = 100
@@ -41,6 +43,10 @@ IMBALANCE_LIMIT_DB = 6.0
 # АРУ: разброс RMS внутри одного тона. 3 дБ — уже слышимая перекачка.
 AGC_WANDER_DB = 3.0
 DEAD_ZONE_DB = 12.0  # провал относительно лучшей точки свипа
+# Живой прогон: тишина для шума, пауза между тонами, хвост после последнего.
+LIVE_SILENCE_MS = 400
+LIVE_GAP_MS = 20
+LIVE_TAIL_MS = 200
 
 
 def _fmt_db(value: float) -> str:
@@ -281,6 +287,70 @@ def format_report(
     return "\n".join(lines)
 
 
+def silence(duration_ms: float, sample_rate: int = config.SAMPLE_RATE) -> array.array:
+    total = max(0, round(duration_ms * sample_rate / 1000.0))
+    return array.array("h", bytes(2 * total))
+
+
+def build_live_stimulus(
+    tone_ms: float = TONE_MS,
+    silence_ms: float = LIVE_SILENCE_MS,
+    gap_ms: float = LIVE_GAP_MS,
+    tail_ms: float = LIVE_TAIL_MS,
+) -> dict:
+    """Тишина + свип тонов + хвост. Смещения тонов — от начала первого тона."""
+    freqs = list(sweep_points())
+    gap = silence(gap_ms)
+    stream = silence(silence_ms)
+    tone_len = 0
+    for i, hz in enumerate(freqs):
+        tone = generate_tone(hz, tone_ms)
+        tone_len = len(tone)
+        stream += tone
+        if i + 1 < len(freqs):
+            stream += gap
+    stream += silence(tail_ms)
+    return {
+        "samples": stream,
+        "freqs": freqs,
+        "tone_len": tone_len,
+        "gap_len": len(gap),
+        "silence_len": round(silence_ms * config.SAMPLE_RATE / 1000.0),
+    }
+
+
+def slice_live_capture(captured: array.array, stim: dict) -> tuple[array.array, dict]:
+    """Шум до фронта, тона — куски известной длины после onset."""
+    onset = find_onset(captured)
+    noise = captured[:onset] if onset > 0 else captured[: stim["silence_len"]]
+    if not noise:
+        noise = array.array("h", bytes(2))
+    tones = {}
+    pos = onset
+    for hz in stim["freqs"]:
+        end = pos + stim["tone_len"]
+        tones[hz] = captured[pos:end]
+        pos = end + stim["gap_len"]
+    return noise, tones
+
+
+def run_live_probe(device) -> str:
+    """Проиграть свип, снять петлю, построить тот же отчёт, что --selftest."""
+    stim = build_live_stimulus()
+    captured = play_and_capture(device, stim["samples"])
+    if not captured:
+        raise SystemExit("вход пуст: проверьте кабель петли и --capture/--playback")
+    noise, tones = slice_live_capture(captured, stim)
+    empty = [hz for hz, chunk in tones.items() if not chunk]
+    if empty:
+        raise SystemExit(
+            "запись короче стимула, нет тонов: "
+            + ", ".join(str(hz) for hz in empty)
+            + " Гц"
+        )
+    return analyze_loopback_sweep(noise, tones)
+
+
 def analyze_loopback_sweep(
     noise_samples,
     tone_map: dict[int, array.array],
@@ -362,13 +432,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="синтетический отчёт без звуковой карты",
     )
     parser.add_argument("--wav", help="разобрать записанный моно WAV")
+    add_device_args(parser)
     return parser
+
+
+def _cmd_live(args: argparse.Namespace) -> int:
+    device = open_live_device(args)
+    try:
+        _write_report(run_live_probe(device))
+    finally:
+        device.close()
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.wav:
         return _cmd_wav(args.wav)
+    if args.live:
+        return _cmd_live(args)
     return _cmd_selftest()
 
 
