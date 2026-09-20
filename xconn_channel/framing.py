@@ -24,14 +24,25 @@ class FrameError(Exception):
     Нужен для NAK: подтверждать отвержение без seq бессмысленно, мастер
     не узнает, что ретранслировать. None — заголовок не читается, кадр
     не идентифицирован, отвечать нечем (docs/protocol.md 8.5: молча).
+
+    raw — исходные байты, на которых разбор споткнулся, если к этому
+    моменту заголовок уже прочитан. AudioTransport отдаёт их вызывающему
+    как есть вместо самого исключения: сессия сама вызовет parse_frame()
+    на тех же байтах и получит тот же FrameError с тем же seq — так
+    испорченный кадр доходит до сессии, а не тонет в демодуляторе.
     """
 
     def __init__(
-        self, message: str, code: int = config.NAK_CRC, seq: int | None = None
+        self,
+        message: str,
+        code: int = config.NAK_CRC,
+        seq: int | None = None,
+        raw: bytes | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.seq = seq
+        self.raw = raw
 
 
 @dataclass(frozen=True)
@@ -297,11 +308,13 @@ class BitCollector:
             length = (self._bytes[3] << 8) | self._bytes[4]
             if length > config.MAX_PAYLOAD:
                 seq = self._bytes[2]
+                raw = bytes(self._bytes)
                 self._end_frame()
                 return FrameError(
                     f"длина payload {length} превышает {config.MAX_PAYLOAD}",
                     config.NAK_LENGTH,
                     seq,
+                    raw,
                 )
             self._expected = 5 + length + 2
             return None
@@ -314,6 +327,7 @@ class BitCollector:
         try:
             return parse_frame(collected)
         except FrameError as error:
+            error.raw = collected
             return error
 
 

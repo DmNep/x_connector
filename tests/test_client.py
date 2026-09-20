@@ -73,6 +73,24 @@ class TestClientOverBytes(unittest.TestCase):
         reply = client.ping()
         self.assertEqual(reply.type, config.PONG)
 
+    def test_apply_corrupted_full_snapshot_does_not_crash(self) -> None:
+        """Испорченный на уровне разбора SCREEN_FULL не должен ронять клиент (6.2).
+
+        CRC кадра уже проверена уровнем ниже — сюда payload доходит
+        только с версией/багом разбора (курсор вне сетки), не с порчей в
+        тракте. Симметрично дельте: клиент просит снимок заново.
+        """
+        import zlib
+
+        client, _, _ = self._pair()
+        client.connect()
+        bogus = zlib.compress(bytes((1, 1, 5, 5, 0)) + b"x")  # курсор вне 1x1
+        reply = framing.Frame(type=config.SCREEN_FULL, seq=99, payload=bogus)
+        result = client._apply(reply)
+        self.assertIsNotNone(result)
+        self.assertIn("$ ", client.render())
+        self.assertNotEqual(client.base_seq, 99, "битый снимок не должен приняться как есть")
+
 
 class TestClientOverAudio(unittest.TestCase):
     """Клиент и хост поверх SampleLink, как два конца кабеля."""
@@ -138,6 +156,37 @@ class TestHostHelo(unittest.TestCase):
         reply = host.handle(framing.parse_frame(raw))
         self.assertEqual(reply[0], config.NAK)
         self.assertEqual(reply[1][1], config.NAK_STATE)
+
+
+class TestHostResize(unittest.TestCase):
+    """RESIZE не должен трогать реальный PTY раньше проверки границ (9)."""
+
+    def _connected_host(self, pty: FakePty) -> AgentHost:
+        host = AgentHost(
+            lambda d: None,
+            lambda t=0.0: None,
+            pty,
+            pump_wait_ms=0,
+            pump_idle_ms=0,
+        )
+        host.connected = True
+        return host
+
+    def test_out_of_range_resize_not_applied_to_pty(self) -> None:
+        pty = FakePty([])
+        host = self._connected_host(pty)
+        raw = framing.build_frame(config.RESIZE, 0, bytes((0, 80)))
+        reply = host.handle(framing.parse_frame(raw))
+        self.assertEqual(reply[0], config.NAK)
+        self.assertEqual(pty.resizes, [], "невалидный RESIZE не должен долетать до pty.resize()")
+
+    def test_valid_resize_still_applied_to_pty(self) -> None:
+        pty = FakePty([])
+        host = self._connected_host(pty)
+        raw = framing.build_frame(config.RESIZE, 0, bytes((30, 100)))
+        reply = host.handle(framing.parse_frame(raw))
+        self.assertNotEqual(reply[0], config.NAK)
+        self.assertEqual(pty.resizes, [(30, 100)])
 
 
 if __name__ == "__main__":

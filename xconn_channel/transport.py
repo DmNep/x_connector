@@ -79,6 +79,11 @@ class AudioTransport:
         # Тишина внутри кадра в секундах: T_IDLE в байт-времени (8.3).
         self._idle_s = config.t_idle_ms(mode) / 1000.0
         self._last_signal = None  # момент последней активности gate
+        # T_LEAD нужен один раз за обмен — перед ответом на только что
+        # принятый кадр (8.1, 8.4), а не перед каждой передачей. Флаг
+        # взводится в _feed() при успешной сборке (Frame или FrameError с
+        # raw) и гасится ближайшим send().
+        self._pending_lead = False
 
     @property
     def mode(self) -> str:
@@ -100,17 +105,30 @@ class AudioTransport:
         self._dem = Demodulator(mode, self._gate_level)
         self._idle_s = config.t_idle_ms(mode) / 1000.0
         self._last_signal = None
+        self._pending_lead = False
 
     # --- отправка -------------------------------------------------------------
 
     def send(self, frame_bytes: bytes) -> None:
-        """Кадр в эфир с таймингами полудуплекса (docs/protocol.md 8.3).
+        """Кадр в эфир с таймингами полудуплекса (docs/protocol.md 8.3, 8.4).
 
-        Тишина T_LEAD уходит первой, до расчёта синуса кадра: приёмник
-        должен начать T_CARRIER, не дожидаясь, пока чистый Python посчитает
-        все отсчёты длинного SCREEN_FULL.
+        T_LEAD уходит первым, до расчёта синуса кадра — приёмник должен
+        начать T_CARRIER, не дожидаясь, пока чистый Python посчитает все
+        отсчёты длинного SCREEN_FULL, — но только когда это ответ на
+        только что принятый кадр: агент отвечает RESP на REQ, клиент —
+        ACK на RESP, любая сторона — NAK на испорченный кадр. Свежий REQ
+        (после собственного предыдущего GAP, а не после приёма) T_LEAD не
+        получает — иначе лишняя пауза перед каждой передачей набегает в
+        ощутимую задержку сверх целевой (AGENTS.md 3.2, «команда в
+        секунду»). Итог не совпадает с ≈1.24 с из таблицы 8.4 (та считает
+        T_LEAD один раз, здесь их два — перед RESP и перед ACK, оба
+        подпадают под общее определение «после приёма», раздел 10) —
+        расхождение на один T_LEAD (60 мс) меньше и безопаснее, чем
+        удалять паузу там, где приём только что реально был.
         """
-        self._sink(self._mod.silence(config.T_LEAD_MS))
+        if self._pending_lead:
+            self._sink(self._mod.silence(config.T_LEAD_MS))
+            self._pending_lead = False
         self._sink(self._mod.modulate(framing.to_bits(frame_bytes)))
         self._sink(self._mod.silence(config.GAP_MS))
 
@@ -169,15 +187,28 @@ class AudioTransport:
     def _feed(self, chunk) -> bytes | None:
         """Пропустить отсчёты в демодулятор. Байты кадра — при сборке.
 
-        FrameError не возвращается: кадр испорчен, NAK — решение сессии,
-        у неё есть seq и причина (docs/protocol.md 8.2). Приём продолжается.
+        Кадр с верной CRC восстанавливается из проверенных полей. Кадр,
+        испорченный уже после чтения заголовка (CRC, длина, тип), тоже
+        не глушится: FrameError несёт raw — те же байты, на которых
+        споткнулся разбор, — и они уходят наверх как обычный ответ.
+        Сессия сама вызовет framing.parse_frame() на них и получит тот же
+        FrameError с seq, чтобы отправить NAK (docs/protocol.md 8.2) —
+        без этого NAK-путь недостижим на реальном звуке: молчание после
+        порчи кадра неотличимо от полного отсутствия сигнала. Мусор без
+        читаемого заголовка (raw нет) по-прежнему отбрасывается молча
+        (8.5).
         """
         for event in self._dem.feed(chunk):
             if isinstance(event, Frame):
                 # Кадр собран: CRC уже проверена, байты восстанавливаются
                 # из проверенных полей — рассинхрон невозможен.
                 self._last_signal = None
+                self._pending_lead = True
                 return framing.build_frame(event.type, event.seq, event.payload)
+            if isinstance(event, FrameError) and event.raw is not None:
+                self._last_signal = None
+                self._pending_lead = True
+                return bytes(event.raw)
         if self._dem._gate.active:
             self._last_signal = self._clock()
         return None

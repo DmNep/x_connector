@@ -31,6 +31,7 @@
 from __future__ import annotations
 
 import array
+import collections
 import math
 
 from . import config
@@ -87,7 +88,10 @@ class EnergyGate:
 
     Сумма квадратов поддерживается инкрементально: O(1) на отсчёт, иначе
     пересчёт окна на каждом из 16000 отсчётов в секунду тормозил бы
-    приёмник на чистом Python.
+    приёмник на чистом Python. Само окно — deque, а не list: выброс
+    самого старого отсчёта через pop(0) сдвигал бы весь список на
+    каждом отсчёте, тот же O(W), от которого спасает инкрементальная
+    сумма; popleft() — O(1).
     """
 
     def __init__(self, level: float, sample_rate: int = config.SAMPLE_RATE) -> None:
@@ -97,7 +101,7 @@ class EnergyGate:
         self._release = level / 2.0
         self._window = max(1, round(0.008 * sample_rate))
         self._sum_sq = 0.0
-        self._queue: list[float] = []
+        self._queue: collections.deque[float] = collections.deque()
         self._active = False
 
     @property
@@ -117,7 +121,7 @@ class EnergyGate:
             self._queue.append(x)
             self._sum_sq += x * x
             if len(self._queue) > self._window:
-                old = self._queue.pop(0)
+                old = self._queue.popleft()
                 self._sum_sq -= old * old
             rms = math.sqrt(self._sum_sq / len(self._queue))
             if rms >= (self._release if self._active else self._level):
@@ -153,7 +157,12 @@ class PreambleTracker:
         # захват срабатывает только на mark-участке, втрое позже.
         self._lag = 2.0 * config.samples_per_bit(mode)
         self._window = 4 * round(self._lag)
-        self._history: list[float] = []
+        # deque(maxlen=window): _correlate() читает только последние
+        # self._window отсчётов, старые вытесняются сами за O(1) на
+        # append — раньше здесь держали list вдвое длиннее окна и раз в
+        # отсчёт делали del history[:1], который на Python-списке — это
+        # O(window) сдвиг всех оставшихся элементов, на каждый отсчёт.
+        self._history: collections.deque[float] = collections.deque(maxlen=self._window)
         self._acquired = False
 
     @property
@@ -161,10 +170,8 @@ class PreambleTracker:
         return self._acquired
 
     def feed(self, samples) -> bool:
-        """Накопить отсчёты, вернуть True при захвате преамбулы."""
+        """Накопить отсчёты (deque.maxlen сдвигает окно сам), вернуть True при захвате."""
         self._history.extend(float(v) for v in samples)
-        if len(self._history) > 2 * self._window:
-            del self._history[: len(self._history) - 2 * self._window]
         if not self._acquired:
             self._acquired = abs(self._correlate()) >= self.ACQUIRE_RATIO
         return self._acquired
@@ -180,10 +187,9 @@ class PreambleTracker:
         в base выходит +0.5, в probe −0.5. Поэтому захват идёт по модулю:
         чередование даёт |corr| ≈ 0.5 в любом режиме, шум — около 0.1.
         """
-        n = len(self._history)
-        if n < self._window:
+        if len(self._history) < self._window:
             return 0.0
-        data = self._history[n - self._window :]
+        data = list(self._history)  # ровно self._window отсчётов (maxlen)
         lag = self._lag
         lo = int(lag)
         frac = lag - lo
@@ -216,6 +222,10 @@ class SlideGoertzel:
     добавляем новый отсчёт с фазой текущего индекса, вычитаем покинувший
     окно с его фазой. Точность не деградирует: вычитаются ровно те же
     числа, что были добавлены, копейки округления не накапливаются.
+
+    Очередь окна — deque: pop(0) на списке сдвигал бы все оставшиеся
+    отсчёты на каждый новый отсчёт (O(W) вместо O(1)), а этот детектор
+    вызывается дважды на каждый отсчёт (mark и space).
     """
 
     __slots__ = ("_coeff", "_window", "_index", "_s_re", "_s_im", "_queue")
@@ -226,7 +236,7 @@ class SlideGoertzel:
         self._index = 0
         self._s_re = 0.0
         self._s_im = 0.0
-        self._queue: list[tuple[float, float]] = []
+        self._queue: collections.deque[tuple[float, float]] = collections.deque()
 
     def reset(self) -> None:
         self._index = 0
@@ -245,7 +255,7 @@ class SlideGoertzel:
         self._s_im += v * s
         self._queue.append((v * c, v * s))
         if len(self._queue) > self._window:
-            old_re, old_im = self._queue.pop(0)
+            old_re, old_im = self._queue.popleft()
             self._s_re -= old_re
             self._s_im -= old_im
         if len(self._queue) < self._window:

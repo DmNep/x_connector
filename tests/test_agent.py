@@ -31,6 +31,7 @@ class FakePty:
         self.written = bytearray()
         self.replies = list(replies)
         self._pending = bytearray()
+        self.resizes: list[tuple[int, int]] = []
 
     def write(self, data: bytes) -> None:
         self.written += data
@@ -41,6 +42,9 @@ class FakePty:
         chunk = bytes(self._pending[:64])
         del self._pending[:64]
         return chunk
+
+    def resize(self, rows: int, cols: int) -> None:
+        self.resizes.append((rows, cols))
 
 
 def frame(frame_type: int, seq: int, payload: bytes = b"") -> Frame:
@@ -106,17 +110,34 @@ class TestAgentCore(unittest.TestCase):
         self.assertEqual(reply_type, config.SCREEN_FULL)
         self.assertIn(b"out", screen.parse_full(payload).cells)
 
+    def test_replay_of_incompressible_screen_naks_not_crashes(self) -> None:
+        """Replay на несжимаемом экране: NAK, а не необработанный ValueError."""
+        import random
+
+        rng = random.Random(5)
+        big_output = b"\r\n".join(
+            bytes(rng.randrange(256) for _ in range(80)) for _ in range(24)
+        )
+        pty = FakePty([b"$ ", big_output + b"\r\n$ "])
+        core = AgentCore(pty.write, pty.read)
+        core.handle(frame(config.CMD, 0, b"\n"))
+        core.handle(frame(config.CMD, 1, b"big\n"))
+        reply_type, payload = core.replay()
+        self.assertEqual(reply_type, config.NAK)
+        self.assertEqual(payload[1], config.NAK_LENGTH)
+
     def test_oversize_delta_falls_back_to_full(self) -> None:
-        """Дельта не влезает — попытка полного снимка (6.2).
+        """Дельта не влезает — попытка полного снимка, а он тоже не влезает (6.2).
 
         При построчном zlib дельта изменённых строк всегда меньше полного
         снимка того же экрана, поэтому рабочий сценарий «дельта не влезла,
         FULL влез» структурно недостижим: не влезшая дельта означает
-        несжимаемый экран, на котором упадёт и FULL. Здесь проверяется,
-        что oversize-дельта не роняет ядро: fallback пробует FULL, и
-        несжимаемый экран честно даёт ValueError — сегментации снимка в
-        протоколе нет (docs/protocol.md 6.1), уровень выше обязан это
-        видеть, а не получать молчание.
+        несжимаемый экран, на котором не влезет и FULL. Сегментации снимка
+        в протоколе нет (docs/protocol.md 6.1, 7), деградировать дальше
+        некуда — но агент не имеет права падать на этом (AGENTS.md 3.2:
+        обязан работать без присмотра). Уровень выше обязан это видеть —
+        через NAK, а не через упавший процесс: NAK клиент увидит и
+        сможет обработать, крах агента увидеть неоткуда.
         """
         import random
 
@@ -127,8 +148,15 @@ class TestAgentCore(unittest.TestCase):
         pty = FakePty([b"$ ", big_output + b"\r\n$ "])
         core = AgentCore(pty.write, pty.read)
         core.handle(frame(config.CMD, 0, b"\n"))
-        with self.assertRaises(ValueError):
-            core.handle(frame(config.CMD, 1, b"big\n"))
+        reply_type, payload = core.handle(frame(config.CMD, 1, b"big\n"))
+        self.assertEqual(reply_type, config.NAK)
+        self.assertEqual(payload[1], config.NAK_LENGTH)
+
+        # Агент жив: следующий вызов не роняет процесс исключением. Экран
+        # никто не очищал (реплики FakePty исчерпаны), поэтому он всё ещё
+        # несжимаем и снова законно даёт NAK — здесь важно отсутствие краха.
+        reply_type, _ = core.handle(frame(config.CMD, 2, b"\n"))
+        self.assertIn(reply_type, (config.SCREEN_FULL, config.SCREEN_DELTA, config.NAK))
 
     def test_resize_resets_base(self) -> None:
         """RESIZE: сетка меняет форму, следующий снимок полный (9, 6.2)."""

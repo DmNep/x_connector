@@ -103,6 +103,33 @@ class TestHandshakeLogic(unittest.TestCase):
         self.assertEqual(agent_helo.mode, config.BASE)
         self.assertEqual((agent_helo.rows, agent_helo.cols), (24, 80))
 
+    def test_handshake_sets_master_mode_without_caller_help(self) -> None:
+        """client_handshake сама переводит master.mode (docs/protocol.md 8.5).
+
+        Раньше это было обязанностью вызывающего: пропуск двух строк
+        после client_handshake оставлял транспорт слушать старым
+        режимом, пока агент уже переключился.
+        """
+        master, agent = self._make_pair()
+        self.assertEqual(master.mode, config.PROBE)
+        handshake.client_handshake(master, config.BASE)
+        self.assertEqual(master.mode, config.BASE)
+
+    def test_handshake_sets_transport_mode_when_given(self) -> None:
+        """Переданный transport тоже переключается client_handshake."""
+        master, agent = self._make_pair()
+
+        class FakeTransport:
+            def __init__(self) -> None:
+                self.mode = config.PROBE
+
+            def set_mode(self, mode: str) -> None:
+                self.mode = mode
+
+        transport = FakeTransport()
+        handshake.client_handshake(master, config.BASE, transport)
+        self.assertEqual(transport.mode, config.BASE)
+
     def test_version_mismatch_is_error(self) -> None:
         """Несовпадение версии — ошибка, не тихая деградация (8.5).
 
@@ -249,11 +276,11 @@ class TestEndToEndOverAudio(unittest.TestCase):
         agent_helo = handshake.client_handshake(master, config.BASE)
         self.assertEqual(agent_helo.version, config.PROTO_VERSION)
         self.assertEqual(agent_helo.mode, config.BASE)
-
-        # Смена режима после рукопожатия: обе стороны поднимаются до base.
-        # (Транспорт в тесте остаётся probe-модемом — проверка смены
-        # модема в живом клиенте; сессия обязана принять новый режим.)
-        master.mode = config.BASE
+        # client_handshake сам переводит сессию мастера в согласованный
+        # режим. Модем в этом тесте остаётся probe-скорости (transport
+        # сюда не передан) — это намеренно, проверяется именно то, что
+        # сессия принимает новый режим независимо от скорости модема.
+        self.assertEqual(master.mode, config.BASE)
 
         # Рабочий handler агента: CMD -> SCREEN_FULL со снимком.
         terminal = Screen(agent_helo.rows, agent_helo.cols)

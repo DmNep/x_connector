@@ -106,7 +106,9 @@ def negotiate(desired: str, supported: Sequence[str]) -> str:
 
 
 def client_handshake(
-    master: MasterSession, desired_mode: str = config.DEFAULT_MODE
+    master: MasterSession,
+    desired_mode: str = config.DEFAULT_MODE,
+    transport=None,
 ) -> Helo:
     """Рукопожатие клиента (docs/protocol.md 8.5, шаги 1-4).
 
@@ -115,6 +117,12 @@ def client_handshake(
     запаса, docs/protocol.md 3.2), и поднимается до base после
     согласования. Возвращает HELO агента; рабочий режим — agent.mode,
     размер экрана агента — agent.rows/cols.
+
+    При успехе сама переводит master (и transport, если он передан) в
+    согласованный режим — вызывающему не нужно помнить про эти две
+    строки после вызова: раньше их пропуск оставлял транспорт слушать
+    старым режимом, пока агент уже переключился, и обмен молча
+    зависал на таймаутах без диагностики, указывающей на причину.
     """
     if master.mode != config.PROBE:
         raise HandshakeError(
@@ -143,6 +151,9 @@ def client_handshake(
         config.check_mode(agent.mode)
     except RuntimeError as error:
         raise HandshakeError(str(error)) from None
+    if transport is not None:
+        transport.set_mode(agent.mode)
+    master.mode = agent.mode
     return agent
 
 

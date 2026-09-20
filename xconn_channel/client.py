@@ -47,10 +47,7 @@ class Client:
 
     def connect(self, desired_mode: str = config.DEFAULT_MODE):
         """HELO в probe, переход в согласованный режим, полный снимок."""
-        self.helo = handshake.client_handshake(self.master, desired_mode)
-        if self.transport is not None:
-            self.transport.set_mode(self.helo.mode)
-        self.master.mode = self.helo.mode
+        self.helo = handshake.client_handshake(self.master, desired_mode, self.transport)
         self.refresh()
         return self.helo
 
@@ -97,7 +94,14 @@ class Client:
 
     def _apply(self, reply: Frame) -> Screen:
         if reply.type == config.SCREEN_FULL:
-            self.screen = screen.parse_full(reply.payload)
+            try:
+                self.screen = screen.parse_full(reply.payload)
+            except ScreenError:
+                # Тот же случай, что и у дельты ниже: разбор не сошёлся
+                # (версия/баг агента, не порча в тракте — CRC кадра уже
+                # проверена) — не ронять клиент, просить снимок ещё раз
+                # (docs/protocol.md 6.2).
+                return self.refresh()
             self.base_seq = reply.seq
             return self.screen
         if reply.type == config.SCREEN_DELTA:

@@ -103,10 +103,15 @@ class MasterSession:
         с сохранением счётчиков, тихая деградация запрещена (8.2).
         """
         attempts = 0
+        req_naks = 0
         reason = "нет ответа"
-        # 1 попытка + MAX_RETRY ретраев (docs/protocol.md 8.3).
-        while attempts < config.MAX_RETRY + 1:
-            attempts += 1
+        # 1 попытка + MAX_RETRY ретраев на каждый вид сбоя (docs/protocol.md
+        # 8.3). Отказ агента на сам REQ (ветка NAK ниже) — повреждение
+        # нашего кадра в тракте на пути туда, не наш сбой, и в бюджет
+        # attempts не входит, как и написано в комментарии этой ветки; но
+        # у него свой бюджет того же размера, а не безлимитный — иначе
+        # канал, стабильно ломающий REQ, зациклил бы обмен навсегда.
+        while attempts <= config.MAX_RETRY and req_naks <= config.MAX_RETRY:
             self._send(framing.build_frame(frame_type, self._seq, payload))
             reply = self._await_reply(self._seq)
 
@@ -115,6 +120,7 @@ class MasterSession:
                 # попыткой не считаем — это не наш сбой, а повреждение
                 # нашего кадра в тракте.
                 self.stats["naks"] += 1
+                req_naks += 1
                 reason = "REQ отвергнут агентом"
                 continue
 
@@ -136,6 +142,7 @@ class MasterSession:
                     return self._finish(retry)
                 reason = "ответ испорчен повторно"
                 self.stats["retries"] += 1
+                attempts += 1
                 continue
 
             if isinstance(reply, Frame) and reply.seq == self._seq:
@@ -144,12 +151,13 @@ class MasterSession:
             # Таймаут или чужой seq: ретрансляция того же seq.
             self.stats["timeouts"] += 1
             self.stats["retries"] += 1
+            attempts += 1
             reason = "нет ответа (T_CARRIER/T_IDLE)"
             continue
 
         raise SessionError(
             f"обмен seq={self._seq} не удался: {reason}",
-            attempts,
+            attempts + req_naks,
             self._seq,
         )
 
@@ -253,6 +261,7 @@ class AgentSession:
                 self.stats["frames"] += 1
                 self._answer(chunk)
                 return True
+            time.sleep(0.001)
         return False
 
     def _answer(self, chunk: bytes) -> None:
