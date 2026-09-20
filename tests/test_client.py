@@ -140,5 +140,36 @@ class TestHostHelo(unittest.TestCase):
         self.assertEqual(reply[1][1], config.NAK_STATE)
 
 
+class TestHostResize(unittest.TestCase):
+    """RESIZE не должен трогать реальный PTY раньше проверки границ (9)."""
+
+    def _connected_host(self, pty: FakePty) -> AgentHost:
+        host = AgentHost(
+            lambda d: None,
+            lambda t=0.0: None,
+            pty,
+            pump_wait_ms=0,
+            pump_idle_ms=0,
+        )
+        host.connected = True
+        return host
+
+    def test_out_of_range_resize_not_applied_to_pty(self) -> None:
+        pty = FakePty([])
+        host = self._connected_host(pty)
+        raw = framing.build_frame(config.RESIZE, 0, bytes((0, 80)))
+        reply = host.handle(framing.parse_frame(raw))
+        self.assertEqual(reply[0], config.NAK)
+        self.assertEqual(pty.resizes, [], "невалидный RESIZE не должен долетать до pty.resize()")
+
+    def test_valid_resize_still_applied_to_pty(self) -> None:
+        pty = FakePty([])
+        host = self._connected_host(pty)
+        raw = framing.build_frame(config.RESIZE, 0, bytes((30, 100)))
+        reply = host.handle(framing.parse_frame(raw))
+        self.assertNotEqual(reply[0], config.NAK)
+        self.assertEqual(pty.resizes, [(30, 100)])
+
+
 if __name__ == "__main__":
     unittest.main()

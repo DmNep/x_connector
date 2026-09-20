@@ -63,7 +63,12 @@ class AgentHost:
             return config.NAK, bytes((frame.seq, config.NAK_STATE))
         if frame.type == config.RESIZE and len(frame.payload) == 2:
             rows, cols = frame.payload
-            if hasattr(self.pty, "resize"):
+            # Границы 1..255 совпадают с проверкой в AgentCore.handle ниже
+            # (agent.py): та отвечает NAK на выходе за них, но к этому
+            # моменту реальный PTY уже был бы изменён, если бы resize()
+            # звался раньше проверки. Значение вне протокола не должно
+            # долетать до ОС вообще, поэтому граница здесь, до resize().
+            if hasattr(self.pty, "resize") and 1 <= rows <= 255 and 1 <= cols <= 255:
                 self.pty.resize(rows, cols)
         return self.core.handle(frame)
 

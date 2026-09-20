@@ -31,6 +31,7 @@ class FakePty:
         self.written = bytearray()
         self.replies = list(replies)
         self._pending = bytearray()
+        self.resizes: list[tuple[int, int]] = []
 
     def write(self, data: bytes) -> None:
         self.written += data
@@ -41,6 +42,9 @@ class FakePty:
         chunk = bytes(self._pending[:64])
         del self._pending[:64]
         return chunk
+
+    def resize(self, rows: int, cols: int) -> None:
+        self.resizes.append((rows, cols))
 
 
 def frame(frame_type: int, seq: int, payload: bytes = b"") -> Frame:
