@@ -216,6 +216,26 @@ class TestRetries(unittest.TestCase):
         self.assertEqual(agent.stats["naks"], config.MAX_RETRY + 1)
 
 
+class TestAgentPoll(unittest.TestCase):
+    def test_poll_with_timeout_does_not_busy_spin(self) -> None:
+        """poll(timeout_ms>0) без данных не должен крутить CPU без сна (9).
+
+        До фикса цикл дергал receive(0) без паузы между опросами: за
+        отведённые 30 мс набегали бы десятки тысяч вызовов. Со сном
+        ~1 мс между опросами их — единицы-десятки.
+        """
+        calls = {"n": 0}
+
+        def counting_receive(timeout: float = 0.0):
+            calls["n"] += 1
+            return None
+
+        agent = AgentSession(lambda data: None, counting_receive, pong_handler)
+        had = agent.poll(30)
+        self.assertFalse(had, "данных не было — обмена не было")
+        self.assertLess(calls["n"], 100, "без сна между опросами счётчик ушёл бы в тысячи")
+
+
 class TestIdempotency(unittest.TestCase):
     def test_replayed_request_not_executed_twice(self) -> None:
         """Повтор REQ с тем же seq не исполняется, отдаётся кэш (docs/protocol.md 8.2).

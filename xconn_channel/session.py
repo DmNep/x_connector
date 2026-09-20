@@ -261,6 +261,7 @@ class AgentSession:
                 self.stats["frames"] += 1
                 self._answer(chunk)
                 return True
+            time.sleep(0.001)
         return False
 
     def _answer(self, chunk: bytes) -> None:
