@@ -12,7 +12,7 @@
 Спецификация — docs/protocol.md, константы — config.py.
 """
 
-from . import config, crc, demodulator, framing, modulator, session
+from . import config, crc, demodulator, framing, modulator, screen, session
 from .demodulator import Demodulator, decimate
 from .framing import (
     BitCollector,
@@ -23,6 +23,7 @@ from .framing import (
     to_bits,
 )
 from .modulator import Modulator
+from .screen import Screen, ScreenError
 from .session import AgentSession, MasterSession, SessionError
 
 __all__ = [
@@ -33,6 +34,8 @@ __all__ = [
     "FrameError",
     "MasterSession",
     "Modulator",
+    "Screen",
+    "ScreenError",
     "SessionError",
     "build_frame",
     "config",
@@ -42,6 +45,7 @@ __all__ = [
     "framing",
     "modulator",
     "parse_frame",
+    "screen",
     "session",
     "to_bits",
 ]
