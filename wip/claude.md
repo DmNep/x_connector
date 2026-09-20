@@ -4,17 +4,15 @@ worktree: D:/projects/x_connector-claude
 branch: wip/claude-idle
 task: ""
 hands_off: []
-updated: 2026-09-21T00:35+03:00
+updated: 2026-09-21T00:50+03:00
 ---
 
-Свободен. Починил находку №6 из ревью (AudioTransport.send() слал
-T_LEAD перед каждым кадром вместо одного раза за обмен перед ответом,
-docs/protocol.md 8.1, 8.4) — теперь T_LEAD только перед ответом на
-только что принятый кадр (флаг _pending_lead). Заодно вскрылась и
-починена смежная хрупкость теста test_idle_reset_recovers_next_frame,
-которая случайно держалась на старом безусловном T_LEAD.
-xconn_channel/transport.py, tests/test_transport.py, коммит
-"Transport: only send T_LEAD before a reply, not before every frame".
-Тесты зелёные (189/189). Находки №1–5 починены ранее в этой сессии.
-Остались 7–10. Каталог Claude: `D:\projects\x_connector-claude`. Перед
-задачей заполнить поля и поставить `status: active`.
+Свободен. Починил находку №7 из ревью (--backend wav в __main__.py был
+в списке выбора, но --capture/--playback никуда не пробрасывались,
+WavAudio получала пустые kwargs) — теперь _open_transport() кладёт их
+в in_path/out_path для wav. xconn_channel/__main__.py, новый файл
+tests/test_main.py, коммит "CLI: wire --capture/--playback to WAV file
+paths for --backend wav". Тесты зелёные (191/191). Находки №1–6
+починены ранее в этой сессии. Остались 8–10. Каталог Claude:
+`D:\projects\x_connector-claude`. Перед задачей заполнить поля и
+поставить `status: active`.
