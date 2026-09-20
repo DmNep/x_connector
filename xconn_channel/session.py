@@ -212,6 +212,7 @@ class AgentSession:
         self._receive = receive
         self._handler = handler
         self._replay_response = None
+        self._clock = _Clock()
         self._last_seq: int | None = None
         self._cached: bytes | None = None
         self.stats = {"frames": 0, "replays": 0, "naks": 0, "rejected": 0}
@@ -230,13 +231,25 @@ class AgentSession:
 
         poll() не блокируется дольше timeout_ms и возвращает управление:
         агент между кадрами занят терминалом (docs/protocol.md 9).
+        timeout_ms == 0 — вычитка без ожидания: один опрос источника,
+        для прокрутки агента из чужого цикла ожидания.
         """
-        chunk = self._receive(timeout_ms)
-        if not chunk:
-            return False
-        self.stats["frames"] += 1
-        self._answer(chunk)
-        return True
+        if timeout_ms <= 0:
+            chunk = self._receive(0)
+            if not chunk:
+                return False
+            self.stats["frames"] += 1
+            self._answer(chunk)
+            return True
+
+        deadline = self._clock() + timeout_ms / 1000.0
+        while self._clock() < deadline:
+            chunk = self._receive(0)
+            if chunk:
+                self.stats["frames"] += 1
+                self._answer(chunk)
+                return True
+        return False
 
     def _answer(self, chunk: bytes) -> None:
         reply = self._parse(chunk)

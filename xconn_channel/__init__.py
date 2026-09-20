@@ -22,9 +22,11 @@ from . import (
     modulator,
     screen,
     session,
+    transport,
     vt100,
 )
 from .agent import AgentCore
+from .transport import AudioTransport, SampleLink
 from .demodulator import Demodulator, decimate
 from .framing import (
     BitCollector,
@@ -42,6 +44,7 @@ from .session import AgentSession, MasterSession, SessionError
 __all__ = [
     "AgentCore",
     "AgentSession",
+    "AudioTransport",
     "BitCollector",
     "Demodulator",
     "Frame",
@@ -50,6 +53,7 @@ __all__ = [
     "Helo",
     "MasterSession",
     "Modulator",
+    "SampleLink",
     "Screen",
     "ScreenError",
     "SessionError",
@@ -67,6 +71,7 @@ __all__ = [
     "screen",
     "session",
     "to_bits",
+    "transport",
     "vt100",
 ]
 
