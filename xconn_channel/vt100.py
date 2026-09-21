@@ -15,9 +15,8 @@ DECSET/DECRST для ?25 (видимость курсора) и ?1049 (альт�
 границах, последовательность может быть разрезана между кусками, и
 эмулятор обязан дособрать её, а не выбросить половину.
 
-SGR парсится и пропускается: сетка однобайтовая (cp437), атрибутов в ней
-нет; инверсия для выделения курсора — вопрос отрисовки на клиенте, а не
-состояния сетки на агенте.
+SGR 0/7/27 хранит reverse в Screen.inverse: сетка по-прежнему cp437,
+но инверсия едет в снимке (docs/protocol.md 6.3).
 """
 
 from __future__ import annotations
@@ -57,6 +56,7 @@ class Vt100:
         self._top = 0
         self._bottom = rows - 1
         self._wrap_pending = False
+        self._sgr_reverse = False
         self._state = _GROUND
         self._params = bytearray()
         self._private = b""
@@ -109,9 +109,9 @@ class Vt100:
             # DECAWM: печать после последней колонки переносит строку.
             self.screen.cur_col = 0
             self._linefeed()
-        self.screen.cells[
-            self.screen.cur_row * self.screen.cols + self.screen.cur_col
-        ] = byte
+        idx = self.screen.cur_row * self.screen.cols + self.screen.cur_col
+        self.screen.cells[idx] = byte
+        self.screen.inverse[idx] = 1 if self._sgr_reverse else 0
         if self.screen.cur_col + 1 < self.screen.cols:
             self.screen.cur_col += 1
             self._wrap_pending = False
@@ -212,8 +212,8 @@ class Vt100:
             self._delete_lines(max(1, p[0]))
         elif final == ord("r"):  # DECSTBM
             self._set_scroll_region(p[0], p[1] if len(p) > 1 else 0)
-        elif final == ord("m"):  # SGR: парсится, атрибутов в сетке нет.
-            pass
+        elif final == ord("m"):  # SGR
+            self._apply_sgr(p)
         elif final == ord("n"):  # DSR
             if p[0] == 6:
                 # Позиция курсора, 1-базная — так ждут программы.
@@ -231,6 +231,14 @@ class Vt100:
                     s.cols * _CELL_WIDTH_PX,
                 )
         return None
+
+    def _apply_sgr(self, params: list[int]) -> None:
+        codes = params or [0]
+        for code in codes:
+            if code in (0, 27):
+                self._sgr_reverse = False
+            elif code == 7:
+                self._sgr_reverse = True
 
     def _csi_private(self, final: int, p: list[int]) -> bytes | None:
         if final == ord("h"):  # DECSET
@@ -260,17 +268,18 @@ class Vt100:
                 s.set_row(row, blank)
             self._erase_line(1)
         elif mode == 2:  # всё
-            s.cells[:] = b" " * (s.rows * s.cols)
+            s.blank()
 
     def _erase_line(self, mode: int) -> None:
         s = self.screen
         start = s.cur_row * s.cols
         if mode == 0:  # от курсора до конца строки
-            s.cells[start + s.cur_col : start + s.cols] = b" " * (s.cols - s.cur_col)
+            n = s.cols - s.cur_col
+            s.write_span(start + s.cur_col, b" " * n)
         elif mode == 1:  # от начала строки до курсора
-            s.cells[start : start + s.cur_col + 1] = b" " * (s.cur_col + 1)
+            s.write_span(start, b" " * (s.cur_col + 1))
         elif mode == 2:  # строка целиком
-            s.cells[start : start + s.cols] = b" " * s.cols
+            s.write_span(start, b" " * s.cols)
 
     def _scroll_up(self, n: int) -> None:
         """Скролл региона вверх на n строк: верхние уходят, снизу пустые."""
@@ -279,8 +288,12 @@ class Vt100:
         height = bottom - top + 1
         n = min(n, height)
         block = s.cells[top * s.cols : (bottom + 1) * s.cols]
+        inv = s.inverse[top * s.cols : (bottom + 1) * s.cols]
         s.cells[top * s.cols : (bottom + 1) * s.cols] = (
             block[n * s.cols :] + b" " * (n * s.cols)
+        )
+        s.inverse[top * s.cols : (bottom + 1) * s.cols] = (
+            inv[n * s.cols :] + b"\x00" * (n * s.cols)
         )
 
     def _insert_lines(self, n: int) -> None:
@@ -293,7 +306,9 @@ class Vt100:
         start = s.cur_row * s.cols
         end = (self._bottom + 1) * s.cols
         block = s.cells[start:end]
+        inv = s.inverse[start:end]
         s.cells[start:end] = b" " * (n * s.cols) + block[: (height - n) * s.cols]
+        s.inverse[start:end] = b"\x00" * (n * s.cols) + inv[: (height - n) * s.cols]
 
     def _delete_lines(self, n: int) -> None:
         """DL: строки на курсоре уходят, снизу пустые."""
@@ -305,7 +320,9 @@ class Vt100:
         start = s.cur_row * s.cols
         end = (self._bottom + 1) * s.cols
         block = s.cells[start:end]
+        inv = s.inverse[start:end]
         s.cells[start:end] = block[n * s.cols :] + b" " * (n * s.cols)
+        s.inverse[start:end] = inv[n * s.cols :] + b"\x00" * (n * s.cols)
 
     def _set_scroll_region(self, top: int, bottom: int) -> None:
         s = self.screen
@@ -326,10 +343,11 @@ class Vt100:
         self._alt_active = True
         # ?1049: сохранить основной экран и курсор, дать чистый альт.
         self._alt_saved.cells[:] = self.screen.cells
+        self._alt_saved.inverse[:] = self.screen.inverse
         self._alt_saved.cur_row = self.screen.cur_row
         self._alt_saved.cur_col = self.screen.cur_col
         self._alt_saved.flags = self.screen.flags
-        self.screen.cells[:] = b" " * (self.screen.rows * self.screen.cols)
+        self.screen.blank()
         self.screen.cur_row = self.screen.cur_col = 0
 
     def _leave_alt(self) -> None:
@@ -337,6 +355,7 @@ class Vt100:
             return
         self._alt_active = False
         self.screen.cells[:] = self._alt_saved.cells
+        self.screen.inverse[:] = self._alt_saved.inverse
         self.screen.cur_row = self._alt_saved.cur_row
         self.screen.cur_col = self._alt_saved.cur_col
         self.screen.flags = self._alt_saved.flags
@@ -356,6 +375,9 @@ class Vt100:
         copy_cols = min(old.cols, cols)
         for r in range(copy_rows):
             new.cells[r * cols : r * cols + copy_cols] = old.cells[
+                r * old.cols : r * old.cols + copy_cols
+            ]
+            new.inverse[r * cols : r * cols + copy_cols] = old.inverse[
                 r * old.cols : r * old.cols + copy_cols
             ]
         new.cur_row = min(old.cur_row, rows - 1)

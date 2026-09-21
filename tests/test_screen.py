@@ -139,7 +139,13 @@ class TestSerializeFull(unittest.TestCase):
             screen.parse_full(zlib.compress(raw, 6))
         self.assertEqual(ctx.exception.code, config.NAK_LENGTH)
 
-    def test_cursor_outside_grid_rejected(self) -> None:
+    def test_zero_rows_is_screen_error(self) -> None:
+        import zlib
+
+        raw = bytes((0, 10, 0, 0, 0))
+        with self.assertRaises(ScreenError) as ctx:
+            screen.parse_full(zlib.compress(raw, 6))
+        self.assertEqual(ctx.exception.code, config.NAK_LENGTH)
         import zlib
 
         raw = bytes((4, 10, 9, 0, 0)) + b" " * 40  # cur_row 9 при rows 4
@@ -180,18 +186,19 @@ class TestSerializeDelta(unittest.TestCase):
             screen.parse_delta(payload, 16, base)
         self.assertEqual(ctx.exception.code, config.NAK_STATE)
 
-    def test_cursor_and_flags_preserved(self) -> None:
-        """Дельта несёт только строки; курсор и флаги — из следующего кадра
-        или полного снимка, при применении они сохраняются от базы."""
+    def test_cursor_and_flags_travel_in_delta(self) -> None:
+        """Дельта несёт курсор и флаги, не только строки (6.2 / AGENTS.md 2.7)."""
         base = filled_screen(4, 10, b" ")
         base.cur_row, base.cur_col = 3, 7
         base.flags = screen.FLAG_APP_ACTIVE
         other = filled_screen(4, 10, b" ")
         other.set_row(2, b"z" * 10)
+        other.cur_row, other.cur_col = 1, 4
+        other.flags = screen.FLAG_BEL
         payload = screen.serialize_delta(0, other, [2])
         applied = screen.parse_delta(payload, 0, base)
-        self.assertEqual((applied.cur_row, applied.cur_col), (3, 7))
-        self.assertEqual(applied.flags, screen.FLAG_APP_ACTIVE)
+        self.assertEqual((applied.cur_row, applied.cur_col), (1, 4))
+        self.assertEqual(applied.flags, screen.FLAG_BEL)
 
     def test_delta_size_limit_enforced(self) -> None:
         """Дельта из слишком многих строк не влезает — ValueError."""
@@ -218,7 +225,7 @@ class TestSerializeDelta(unittest.TestCase):
     def test_row_outside_grid_rejected(self) -> None:
         import zlib
 
-        payload = bytes((0, 1, 9)) + zlib.compress(b"a" * 10, 6)  # row 9 при rows 4
+        payload = bytes((0, 1, 0, 0, 0, 9)) + zlib.compress(b"a" * 10, 6)
         base = filled_screen(4, 10, b" ")
         with self.assertRaises(ScreenError) as ctx:
             screen.parse_delta(payload, 0, base)

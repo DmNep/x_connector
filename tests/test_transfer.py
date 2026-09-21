@@ -50,6 +50,13 @@ class TestCodec(unittest.TestCase):
         with self.assertRaises(TransferError):
             transfer.encode_data(0, b"x" * (config.FILE_CHUNK + 1))
 
+    def test_decode_open_rejects_huge_size(self) -> None:
+        payload = transfer.encode_open("a.bin", 1, 0)
+        raw = bytearray(payload)
+        raw[-8:-4] = (0xFFFFFFFF).to_bytes(4, "big")
+        with self.assertRaises(TransferError):
+            transfer.decode_open(bytes(raw))
+
     def test_crc32_known(self) -> None:
         self.assertEqual(transfer.crc32(b"123456789"), 0xCBF43926)
 
@@ -113,6 +120,18 @@ class TestAgentFile(unittest.TestCase):
             )
             self.assertEqual(rt, config.NAK)
             self.assertFalse(Path(tmp, "a.txt").exists())
+
+    def test_second_open_naks_while_xfer_active(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            core = AgentCore(FakePty([]).write, FakePty([]).read, file_root=tmp)
+            core.handle(
+                frame(config.FILE_OPEN, 0, transfer.encode_open("a.txt", 4, transfer.crc32(b"abcd")))
+            )
+            rt, payload = core.handle(
+                frame(config.FILE_OPEN, 1, transfer.encode_open("b.txt", 1, transfer.crc32(b"x")))
+            )
+            self.assertEqual(rt, config.NAK)
+            self.assertEqual(payload[1], config.NAK_STATE)
 
 
 class TestReplayFile(unittest.TestCase):

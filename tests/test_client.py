@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from xconn_channel import config, framing
+from xconn_channel import config, framing, screen
 from xconn_channel.client import KEYS, Client
 from xconn_channel.host import AgentHost
 from xconn_channel.transport import AudioTransport, SampleLink
@@ -89,9 +89,8 @@ class TestClientOverBytes(unittest.TestCase):
         client.connect()
         bogus = zlib.compress(bytes((1, 1, 5, 5, 0)) + b"x")  # курсор вне 1x1
         reply = framing.Frame(type=config.SCREEN_FULL, seq=99, payload=bogus)
-        result = client._apply(reply)
-        self.assertIsNotNone(result)
-        self.assertIn("$ ", client.render())
+        with self.assertRaises(screen.ScreenError):
+            client._apply(reply)
         self.assertNotEqual(client.base_seq, 99, "битый снимок не должен приняться как есть")
 
     def test_put_file(self) -> None:

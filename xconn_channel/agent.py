@@ -29,7 +29,7 @@ import time
 
 from . import config, screen, transfer
 from .framing import Frame
-from .screen import Screen
+from .screen import FLAG_BEL, Screen
 from .transfer import TransferError
 from .vt100 import Vt100
 
@@ -175,6 +175,8 @@ class AgentCore:
             return config.NAK, bytes((frame.seq, config.NAK_LENGTH))
 
     def _file_open(self, frame: Frame) -> tuple[int, bytes]:
+        if self._xfer is not None:
+            return config.NAK, bytes((frame.seq, config.NAK_STATE))
         name, size, digest = transfer.decode_open(frame.payload)
         os.makedirs(self._file_root, exist_ok=True)
         self._xfer = {
@@ -257,9 +259,11 @@ class AgentCore:
                 return config.NAK, bytes((seq, config.NAK_LENGTH))
             self._base = Screen(current.rows, current.cols)
             self._base.cells[:] = current.cells
-            self._base.flags = current.flags
+            self._base.copy_look(current)
             self._base_seq = seq
             self.stats["fulls"] += 1
+            current.flags &= ~FLAG_BEL
+            self._base.flags = current.flags
             return config.SCREEN_FULL, payload
 
         changed = self._base.changed_rows(current)
@@ -272,7 +276,9 @@ class AgentCore:
             return self._snapshot(seq)
 
         self._base.cells[:] = current.cells
-        self._base.flags = current.flags
+        self._base.copy_look(current)
         self._base_seq = seq
         self.stats["deltas"] += 1
+        current.flags &= ~FLAG_BEL
+        self._base.flags = current.flags
         return config.SCREEN_DELTA, payload

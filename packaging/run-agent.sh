@@ -1,7 +1,7 @@
 #!/bin/sh
 # Запуск агента. Читает /etc/default/xconn-agent, в сеть не ходит.
 set -eu
-PREFIX=/opt/x_connector
+PREFIX=${XCONN_PREFIX:-/opt/x_connector}
 if [ -f /etc/default/xconn-agent ]; then
     set -a
     # shellcheck disable=SC1091

@@ -45,6 +45,7 @@ class TestWriteStick(unittest.TestCase):
             self.assertNotIn(token, text, token)
         self.assertIn("dpkg -i", text)
         self.assertIn("без apt", text)
+        self.assertIn("XCONN_PREFIX", text)
 
     def test_service_denies_ip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

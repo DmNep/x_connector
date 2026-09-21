@@ -16,6 +16,7 @@ from xconn_channel.devcheck import (
     format_device_list,
     missing_capture_text,
     missing_playback_text,
+    parse_winmm_index,
     unknown_index_text,
 )
 from xconn_channel import __main__ as cli
@@ -59,6 +60,13 @@ class TestMessages(unittest.TestCase):
         self.assertIn("(нет устройств)", text)
         self.assertIn("0: speakers", text)
 
+    def test_parse_winmm_index_rejects_non_int(self) -> None:
+        with self.assertRaises(DeviceError) as ctx:
+            parse_winmm_index("mic", "capture")
+        self.assertIn("не номер", str(ctx.exception))
+        self.assertEqual(parse_winmm_index(None, "capture"), -1)
+        self.assertEqual(parse_winmm_index("0", "capture"), 0)
+
 
 class TestCliDevices(unittest.TestCase):
     def test_devices_subcommand_exists(self) -> None:
@@ -76,6 +84,13 @@ class TestCliDevices(unittest.TestCase):
         self.assertIn("нет устройства записи", captured.getvalue())
         self.assertNotIn("Traceback", captured.getvalue())
         self.assertNotIn("код 2", captured.getvalue())
+
+    def test_parse_winmm_index_rejects_non_int(self) -> None:
+        with self.assertRaises(DeviceError) as ctx:
+            parse_winmm_index("mic", "capture")
+        self.assertIn("не номер", str(ctx.exception))
+        self.assertEqual(parse_winmm_index(None, "capture"), -1)
+        self.assertEqual(parse_winmm_index("0", "capture"), 0)
 
 
 if __name__ == "__main__":

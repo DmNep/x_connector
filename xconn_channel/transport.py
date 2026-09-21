@@ -139,7 +139,7 @@ class AudioTransport:
 
         После того как gate увидел тон, ждать до сборки кадра, обрыва по
         T_IDLE или потолка длительности максимального кадра. Нельзя
-        отрезать длинный SCREEN_FULL тем же T_CARRIER: 250 мс меньше
+        отрезать длинный SCREEN_FULL тем же T_CARRIER: T_CARRIER меньше
         1.76 с снимка (docs/protocol.md 8.3, 8.4).
         """
         if timeout <= 0:

@@ -31,8 +31,8 @@ class AgentHost:
         rows: int = config.DEFAULT_ROWS,
         cols: int = config.DEFAULT_COLS,
         supported=None,
-        pump_wait_ms: float = 250,
-        pump_idle_ms: float = 80,
+        pump_wait_ms: float = config.PUMP_WAIT_MS,
+        pump_idle_ms: float = config.PUMP_IDLE_MS,
         file_root=None,
     ) -> None:
         self.pty = pty

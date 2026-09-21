@@ -23,6 +23,7 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 from xconn_channel import config, framing
+from xconn_channel.devcheck import DeviceError, emit
 from xconn_channel.demodulator import demodulate_frame, gate_level_from_noise, rms_level
 from xconn_channel.framing import Frame, FrameError
 from xconn_channel.modulator import Modulator
@@ -217,15 +218,7 @@ def format_report(rows: list[dict]) -> str:
 
 
 def _write_report(text: str) -> None:
-    payload = text if text.endswith("\n") else text + "\n"
-    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
-    data = payload.encode(encoding, errors="replace")
-    buf = getattr(sys.stdout, "buffer", None)
-    if buf is not None:
-        buf.write(data)
-        buf.flush()
-    else:
-        sys.stdout.write(payload)
+    emit(text, sys.stdout)
 
 
 def run_selftest() -> list[dict]:
@@ -278,7 +271,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _cmd_live(args: argparse.Namespace) -> int:
     modes = (args.mode,) if args.mode else (config.PROBE, config.BASE)
-    device = open_live_device(args)
+    try:
+        device = open_live_device(args)
+    except DeviceError as exc:
+        emit(str(exc))
+        return 2
     try:
         rows = [
             measure_live(device, mode, n_frames=args.frames)
@@ -287,7 +284,8 @@ def _cmd_live(args: argparse.Namespace) -> int:
     finally:
         device.close()
     _write_report(format_report(rows))
-    return 0 if selftest_ok(rows) else 1
+    # Живой кабель не обязан быть BER=0: критерий selftest_ok только для DSP.
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:

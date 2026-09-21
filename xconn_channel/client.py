@@ -52,38 +52,44 @@ class Client:
         self.refresh()
         return self.helo
 
+    def _exchange_screen(self, frame_type: int, payload: bytes = b"") -> Screen:
+        reply = self.master.exchange(frame_type, payload, accept=self._apply)
+        if reply.type == config.NAK:
+            raise SessionError(
+                f"агент отверг кадр seq={reply.seq}", 1, reply.seq
+            )
+        assert self.screen is not None
+        return self.screen
+
     def cmd(self, text: str) -> Screen:
         """Строка ввода. Добавляет \\n, если его нет: удобство CLI и ИИ."""
-        payload = text.encode("utf-8")
-        if not payload.endswith((b"\n", b"\r")):
-            payload += b"\n"
-        reply = self.master.exchange(config.CMD, payload)
-        return self._apply(reply)
+        data = text.encode("utf-8")
+        if not data.endswith((b"\n", b"\r")):
+            data += b"\n"
+        return self._exchange_screen(config.CMD, data)
 
     def type_bytes(self, data: bytes) -> Screen:
         """Сырые байты без добавления перевода строки."""
-        reply = self.master.exchange(config.CMD, data)
-        return self._apply(reply)
+        return self._exchange_screen(config.CMD, data)
 
     def key(self, name: str) -> Screen:
         """Именованный ключ из KEYS либо сырая строка байт."""
         data = KEYS.get(name.lower())
         if data is None:
             data = name.encode("latin-1")
-        reply = self.master.exchange(config.KEY, data)
-        return self._apply(reply)
+        return self._exchange_screen(config.KEY, data)
 
     def resize(self, rows: int, cols: int) -> Screen:
-        reply = self.master.exchange(config.RESIZE, bytes((rows, cols)))
-        return self._apply(reply)
+        return self._exchange_screen(config.RESIZE, bytes((rows, cols)))
 
     def ping(self) -> Frame:
         return self.master.exchange(config.PING)
 
     def refresh(self) -> Screen:
         """Запросить SCREEN_FULL (PING с флагом, docs/protocol.md 6.2)."""
-        reply = self.master.exchange(config.PING, bytes((config.PING_FULL,)))
-        return self._apply(reply)
+        self._exchange_screen(config.PING, bytes((config.PING_FULL,)))
+        assert self.screen is not None
+        return self.screen
 
     def put(self, local_path: str, remote_name: str | None = None) -> Screen:
         """Файл на агент: OPEN / DATA / CLOSE (docs/protocol.md 7)."""
@@ -93,15 +99,18 @@ class Client:
         data = path.read_bytes()
         name = sanitize_name(remote_name or path.name)
         digest = crc32(data)
-        reply = self.master.exchange(
-            config.FILE_OPEN, encode_open(name, len(data), digest)
-        )
-        self._apply(reply)
-        for offset, chunk in iter_chunks(data):
-            reply = self.master.exchange(config.FILE_DATA, encode_data(offset, chunk))
-            self._apply(reply)
-        reply = self.master.exchange(config.FILE_CLOSE, encode_close(digest))
-        return self._apply(reply)
+        for ftype, payload in (
+            (config.FILE_OPEN, encode_open(name, len(data), digest)),
+            *[(config.FILE_DATA, encode_data(offset, chunk)) for offset, chunk in iter_chunks(data)],
+            (config.FILE_CLOSE, encode_close(digest)),
+        ):
+            reply = self.master.exchange(ftype, payload, accept=self._apply)
+            if reply.type == config.NAK:
+                raise SessionError(
+                    f"агент отверг {ftype:#04x} seq={reply.seq}", 1, reply.seq
+                )
+        assert self.screen is not None
+        return self.screen
 
     def render(self) -> str:
         """Сетка как текст для печати. Пустой экран — пустая строка."""
@@ -113,25 +122,15 @@ class Client:
 
     def _apply(self, reply: Frame) -> Screen:
         if reply.type == config.SCREEN_FULL:
-            try:
-                self.screen = screen.parse_full(reply.payload)
-            except ScreenError:
-                # Тот же случай, что и у дельты ниже: разбор не сошёлся
-                # (версия/баг агента, не порча в тракте — CRC кадра уже
-                # проверена) — не ронять клиент, просить снимок ещё раз
-                # (docs/protocol.md 6.2).
-                return self.refresh()
+            self.screen = screen.parse_full(reply.payload)
             self.base_seq = reply.seq
             return self.screen
         if reply.type == config.SCREEN_DELTA:
             if self.screen is None or self.base_seq is None:
-                return self.refresh()
-            try:
-                self.screen = screen.parse_delta(
-                    reply.payload, self.base_seq, self.screen
-                )
-            except ScreenError:
-                return self.refresh()
+                raise ScreenError("нет базы для дельты", config.NAK_STATE)
+            self.screen = screen.parse_delta(
+                reply.payload, self.base_seq, self.screen
+            )
             self.base_seq = reply.seq
             return self.screen
         if reply.type == config.PONG:
@@ -141,6 +140,10 @@ class Client:
         if reply.type == config.NOTE:
             if self.screen is None:
                 raise SessionError("NOTE без экрана после connect", 1, reply.seq)
+            if not reply.payload or reply.payload[0] != config.NOTE_OK:
+                raise SessionError(
+                    f"NOTE без NOTE_OK seq={reply.seq}", 1, reply.seq
+                )
             return self.screen
         if reply.type == config.NAK:
             raise SessionError(

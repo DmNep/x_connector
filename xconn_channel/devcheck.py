@@ -157,6 +157,19 @@ def check_winmm(in_device: int, out_device: int) -> None:
     # -1 — WAVE_MAPPER, допустим, если список не пуст.
 
 
+def parse_winmm_index(value: str | None, kind: str) -> int:
+    """Номер winmm или -1 (WAVE_MAPPER). Нечисловое значение — ошибка, не тихий фолбэк."""
+    if value is None:
+        return -1
+    try:
+        return int(value)
+    except ValueError:
+        raise DeviceError(
+            f"--{kind} {value!r} не номер устройства. "
+            "смотрите: py -m xconn_channel devices"
+        ) from None
+
+
 def format_device_list(inputs: list[str], outputs: list[str]) -> str:
     lines = ["запись (вход, --capture):"]
     if inputs:

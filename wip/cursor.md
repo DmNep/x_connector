@@ -1,10 +1,10 @@
 ---
 status: idle
 worktree: D:/projects/x_connector
-branch: wip/cursor-device-errors
+branch: wip/cursor-review-fixes
 task: ""
 hands_off: []
-updated: 2026-09-21T00:04+03:00
+updated: 2026-09-21T21:40+03:00
 ---
 
-Свободен. Понятные ошибки устройств на `wip/cursor-device-errors`.
+Свободен. Находки ревью закрыты на `wip/cursor-review-fixes`.

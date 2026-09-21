@@ -31,6 +31,7 @@ import time
 
 from . import config, framing
 from .framing import Frame, FrameError
+from .screen import ScreenError
 
 
 class SessionError(Exception):
@@ -96,33 +97,31 @@ class MasterSession:
     def seq(self) -> int:
         return self._seq
 
-    def exchange(self, frame_type: int, payload: bytes = b"") -> Frame:
+    def exchange(self, frame_type: int, payload: bytes = b"", accept=None) -> Frame:
         """Один обмен: REQ(seq) -> RESP(seq) -> ACK(seq).
 
-        Бросает SessionError после MAX_RETRY ретраев — ошибка наверх
-        с сохранением счётчиков, тихая деградация запрещена (8.2).
+        accept(frame) — разбор полезной нагрузки до ACK. ScreenError
+        превращается в NAK, агент шлёт SCREEN_FULL (docs/protocol.md 6.2).
         """
         attempts = 0
         req_naks = 0
         reason = "нет ответа"
-        # 1 попытка + MAX_RETRY ретраев на каждый вид сбоя (docs/protocol.md
-        # 8.3). Отказ агента на сам REQ (ветка NAK ниже) — повреждение
-        # нашего кадра в тракте на пути туда, не наш сбой, и в бюджет
-        # attempts не входит, как и написано в комментарии этой ветки; но
-        # у него свой бюджет того же размера, а не безлимитный — иначе
-        # канал, стабильно ломающий REQ, зациклил бы обмен навсегда.
         while attempts <= config.MAX_RETRY and req_naks <= config.MAX_RETRY:
             self._send(framing.build_frame(frame_type, self._seq, payload))
             reply = self._await_reply(self._seq)
 
             if isinstance(reply, Frame) and reply.type == config.NAK:
-                # Агент отверг наш REQ: ретранслируем немедленно, той же
-                # попыткой не считаем — это не наш сбой, а повреждение
-                # нашего кадра в тракте.
+                code = (
+                    reply.payload[1]
+                    if len(reply.payload) >= 2
+                    else config.NAK_CRC
+                )
                 self.stats["naks"] += 1
-                req_naks += 1
-                reason = "REQ отвергнут агентом"
-                continue
+                if code == config.NAK_CRC:
+                    req_naks += 1
+                    reason = "REQ отвергнут агентом"
+                    continue
+                return self._finish(reply)
 
             if isinstance(reply, FrameError):
                 # Ответ пришёл испорченным: NAK — запрос повтора ответа,
@@ -139,14 +138,14 @@ class MasterSession:
                 ):
                     # NAK в ответ на наш NAK — не ответ: агент отверг наш
                     # RETR-кадр, следующая итерация ретранслирует REQ.
-                    return self._finish(retry)
+                    return self._complete(retry, accept)
                 reason = "ответ испорчен повторно"
                 self.stats["retries"] += 1
                 attempts += 1
                 continue
 
             if isinstance(reply, Frame) and reply.seq == self._seq:
-                return self._finish(reply)
+                return self._complete(reply, accept)
 
             # Таймаут или чужой seq: ретрансляция того же seq.
             self.stats["timeouts"] += 1
@@ -160,6 +159,37 @@ class MasterSession:
             attempts + req_naks,
             self._seq,
         )
+
+    def _complete(self, reply: Frame, accept) -> Frame:
+        """Разбор payload, затем ACK. Битый снимок — NAK, ждём FULL."""
+        if accept is None:
+            return self._finish(reply)
+        try:
+            accept(reply)
+        except ScreenError as err:
+            self.stats["naks"] += 1
+            self._send(framing.nak(self._seq, err.code))
+            retry = self._await_reply(self._seq)
+            if not (
+                isinstance(retry, Frame)
+                and retry.seq == self._seq
+                and retry.type != config.NAK
+            ):
+                raise SessionError(
+                    f"повтор снимка seq={self._seq} не пришёл",
+                    1,
+                    self._seq,
+                )
+            try:
+                accept(retry)
+            except ScreenError:
+                raise SessionError(
+                    f"снимок seq={self._seq} не разбирается",
+                    1,
+                    self._seq,
+                )
+            return self._finish(retry)
+        return self._finish(reply)
 
     def _finish(self, reply: Frame) -> Frame:
         """Завершение успешного обмена: ACK и продвижение seq."""

@@ -16,7 +16,14 @@ import threading
 from . import __version__, config
 from .audioio import open_audio
 from .client import Client
-from .devcheck import DeviceError, check_winmm, emit, explain_oserror, report_devices
+from .devcheck import (
+    DeviceError,
+    check_winmm,
+    emit,
+    explain_oserror,
+    parse_winmm_index,
+    report_devices,
+)
 from .host import AgentHost
 from .shell import open_shell
 from .stick import StickError, list_removable, write_report, write_stick
@@ -117,14 +124,8 @@ def _open_transport(args: argparse.Namespace, role: str) -> tuple:
         kwargs["capture_device"] = args.capture or "hw:0,0"
         kwargs["playback_device"] = args.playback or "hw:0,0"
     elif name == "winmm":
-        try:
-            kwargs["in_device"] = int(args.capture) if args.capture is not None else -1
-        except ValueError:
-            kwargs["in_device"] = -1
-        try:
-            kwargs["out_device"] = int(args.playback) if args.playback is not None else -1
-        except ValueError:
-            kwargs["out_device"] = -1
+        kwargs["in_device"] = parse_winmm_index(args.capture, "capture")
+        kwargs["out_device"] = parse_winmm_index(args.playback, "playback")
         check_winmm(kwargs["in_device"], kwargs["out_device"])
     elif name == "wav":
         # --capture/--playback переиспользуются как пути к WAV-файлам:

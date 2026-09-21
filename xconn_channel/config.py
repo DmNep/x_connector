@@ -192,9 +192,16 @@ SCREEN_CODEPAGE = "cp437"
 
 GAP_MS = 120  # тишина при смене направления
 T_LEAD_MS = 60  # пауза перед передачей после приёма
-T_CARRIER_MS = 250  # ожидание начала несущей ответа
+# Сколько агент ждёт вывод PTY перед снимком (host.pump).
+PUMP_WAIT_MS = 250
+PUMP_IDLE_MS = 80
+# Ожидание начала несущей ответа. Должно покрыть pump + T_LEAD, иначе
+# медленный bash неотличим от мёртвого кабеля.
+T_CARRIER_MS = PUMP_WAIT_MS + PUMP_IDLE_MS + T_LEAD_MS + 110  # 500
 T_IDLE_BYTES = 12  # тишина внутри кадра, в байт-времени
 MAX_RETRY = 3
+
+assert T_CARRIER_MS >= PUMP_WAIT_MS + PUMP_IDLE_MS + T_LEAD_MS
 
 
 def t_idle_ms(mode: str = DEFAULT_MODE) -> float:

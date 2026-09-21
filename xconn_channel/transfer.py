@@ -56,6 +56,8 @@ def decode_open(payload: bytes) -> tuple[str, int, int]:
     raw = payload[: config.FILE_NAME_BYTES]
     name = raw.split(b"\x00", 1)[0].decode("utf-8")
     size, digest = struct.unpack(">II", payload[config.FILE_NAME_BYTES :])
+    if not 0 <= size <= config.FILE_MAX_BYTES:
+        raise TransferError(f"размер {size} вне 0..{config.FILE_MAX_BYTES}")
     return sanitize_name(name), size, digest
 
 

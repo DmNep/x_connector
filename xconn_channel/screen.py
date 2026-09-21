@@ -14,9 +14,12 @@
 
 Сериализация SCREEN_DELTA (6.2):
 
-    base_seq:1  count:1  ( row_index:1  zlib(row_bytes) )...
+    base_seq:1  count:1  cur_row:1  cur_col:1  flags:1
+    ( row_index:1  zlib(row_bytes [+ inverse_row]) )...
 
     base_seq — номер кадра SCREEN_FULL, от которого считается дельта.
+    Курсор и флаги едут в каждом кадре дельты: иначе клиент видит сетку
+    после команды, а курсор — с прошлого FULL.
     Если клиент не может применить дельту (нет базового снимка, base_seq
     не совпал), он отвечает NAK с причиной NAK_STATE, и агент присылает
     SCREEN_FULL.
@@ -74,6 +77,7 @@ class Screen:
         self.rows = rows
         self.cols = cols
         self.cells = bytearray(b" " * (rows * cols))
+        self.inverse = bytearray(rows * cols)  # 0/1, SGR reverse
         self.cur_row = 0
         self.cur_col = 0
         self.flags = 0
@@ -85,18 +89,39 @@ class Screen:
         start = row * self.cols
         return bytes(self.cells[start : start + self.cols])
 
-    def set_row(self, row: int, data: bytes) -> None:
+    def set_row(self, row: int, data: bytes, inverse: bytes | None = None) -> None:
         self._check_row(row)
         if len(data) != self.cols:
             raise ValueError(f"строка {len(data)} байт, ожидалось {self.cols}")
         start = row * self.cols
         self.cells[start : start + self.cols] = data
+        if inverse is None:
+            self.inverse[start : start + self.cols] = b"\x00" * self.cols
+        else:
+            if len(inverse) != self.cols:
+                raise ValueError(f"inverse {len(inverse)} байт, ожидалось {self.cols}")
+            self.inverse[start : start + self.cols] = inverse
 
-    def put(self, row: int, col: int, ch: int) -> None:
+    def row_inverse(self, row: int) -> bytes:
+        self._check_row(row)
+        start = row * self.cols
+        return bytes(self.inverse[start : start + self.cols])
+
+    def put(self, row: int, col: int, ch: int, inverse: int = 0) -> None:
         self._check_row(row)
         if not 0 <= col < self.cols:
             raise ValueError(f"col {col} вне 0..{self.cols - 1}")
-        self.cells[row * self.cols + col] = ch
+        idx = row * self.cols + col
+        self.cells[idx] = ch
+        self.inverse[idx] = 1 if inverse else 0
+
+    def copy_look(self, other: "Screen") -> None:
+        """Курсор, флаги и инверсия. Ячейки — отдельно, через cells[:]."""
+        self.cur_row = other.cur_row
+        self.cur_col = other.cur_col
+        self.flags = other.flags
+        if (self.rows, self.cols) == (other.rows, other.cols):
+            self.inverse[:] = other.inverse
 
     def get(self, row: int, col: int) -> int:
         self._check_row(row)
@@ -109,6 +134,19 @@ class Screen:
         return "\n".join(
             self.row_bytes(r).decode(config.SCREEN_CODEPAGE) for r in range(self.rows)
         )
+
+    def blank(self) -> None:
+        n = self.rows * self.cols
+        self.cells[:] = b" " * n
+        self.inverse[:] = b"\x00" * n
+
+    def write_span(self, start: int, data: bytes, inverse: bytes | None = None) -> None:
+        end = start + len(data)
+        self.cells[start:end] = data
+        if inverse is None:
+            self.inverse[start:end] = b"\x00" * len(data)
+        else:
+            self.inverse[start:end] = inverse
 
     def _check_row(self, row: int) -> None:
         if not 0 <= row < self.rows:
@@ -125,7 +163,12 @@ class Screen:
         changed = []
         for row in range(self.rows):
             start = row * self.cols
-            if self.cells[start : start + self.cols] != other.cells[start : start + self.cols]:
+            if (
+                self.cells[start : start + self.cols]
+                != other.cells[start : start + self.cols]
+                or self.inverse[start : start + self.cols]
+                != other.inverse[start : start + self.cols]
+            ):
                 changed.append(row)
         return changed
 
@@ -144,7 +187,10 @@ def serialize_full(screen: Screen) -> bytes:
     header = bytes(
         (screen.rows, screen.cols, screen.cur_row, screen.cur_col, screen.flags)
     )
-    packed = zlib.compress(header + bytes(screen.cells), _ZLIB_LEVEL)
+    body = bytes(screen.cells)
+    if any(screen.inverse):
+        body += bytes(screen.inverse)
+    packed = zlib.compress(header + body, _ZLIB_LEVEL)
     if len(packed) > config.MAX_PAYLOAD:
         raise ValueError(
             f"снимок после zlib {len(packed)} байт превышает MAX_PAYLOAD="
@@ -165,22 +211,29 @@ def parse_full(payload: bytes) -> Screen:
 
     rows, cols, cur_row, cur_col, flags = raw[:5]
     data = raw[5:]
-    if len(data) != rows * cols:
+    try:
+        parsed = Screen(rows, cols)
+    except ValueError as err:
+        raise ScreenError(str(err), config.NAK_LENGTH) from None
+    need = rows * cols
+    if len(data) == need:
+        parsed.cells[:] = data
+    elif len(data) == need * 2:
+        parsed.cells[:] = data[:need]
+        parsed.inverse[:] = data[need:]
+    else:
         raise ScreenError(
-            f"сетка {len(data)} байт, ожидалось {rows * cols}", config.NAK_LENGTH
+            f"сетка {len(data)} байт, ожидалось {need} или {need * 2}",
+            config.NAK_LENGTH,
         )
-
-    screen = Screen(rows, cols)
-    screen.cells[:] = data
-    screen.flags = flags
+    parsed.flags = flags
     if cur_row >= rows or cur_col >= cols:
-        # Курсор вне сетки: снимок не согласован, применять нельзя.
         raise ScreenError(
             f"курсор ({cur_row},{cur_col}) вне сетки {rows}x{cols}", config.NAK_LENGTH
         )
-    screen.cur_row = cur_row
-    screen.cur_col = cur_col
-    return screen
+    parsed.cur_row = cur_row
+    parsed.cur_col = cur_col
+    return parsed
 
 
 # --- SCREEN_DELTA ---------------------------------------------------------------
@@ -203,9 +256,13 @@ def serialize_delta(base_seq: int, screen: Screen, changed: list[int]) -> bytes:
     if not 0 <= len(changed) <= 0xFF:
         raise ValueError(f"число строк {len(changed)} вне байта")
 
-    parts = [bytes((base_seq, len(changed)))]
+    parts = [bytes((base_seq, len(changed), screen.cur_row, screen.cur_col, screen.flags))]
     for row in changed:
-        packed = zlib.compress(screen.row_bytes(row), _ZLIB_LEVEL)
+        row_payload = screen.row_bytes(row)
+        inv = screen.row_inverse(row)
+        if any(inv):
+            row_payload += inv
+        packed = zlib.compress(row_payload, _ZLIB_LEVEL)
         parts.append(bytes((row,)) + packed)
     payload = b"".join(parts)
     if len(payload) > config.MAX_PAYLOAD:
@@ -223,7 +280,7 @@ def parse_delta(payload: bytes, base_seq: int, screen: Screen) -> Screen:
     базой клиента, дельту применять нельзя, и клиент отвечает NAK с
     NAK_STATE, агент присылает SCREEN_FULL (docs/protocol.md 6.2).
     """
-    if len(payload) < 2:
+    if len(payload) < 5:
         raise ScreenError(f"дельта усечена: {len(payload)} байт", config.NAK_LENGTH)
     if payload[0] != base_seq:
         raise ScreenError(
@@ -232,12 +289,18 @@ def parse_delta(payload: bytes, base_seq: int, screen: Screen) -> Screen:
 
     updated = Screen(screen.rows, screen.cols)
     updated.cells[:] = screen.cells
-    updated.cur_row = screen.cur_row
-    updated.cur_col = screen.cur_col
-    updated.flags = screen.flags
+    updated.inverse[:] = screen.inverse
+    updated.cur_row = payload[2]
+    updated.cur_col = payload[3]
+    updated.flags = payload[4]
+    if updated.cur_row >= updated.rows or updated.cur_col >= updated.cols:
+        raise ScreenError(
+            f"курсор ({updated.cur_row},{updated.cur_col}) вне сетки",
+            config.NAK_LENGTH,
+        )
 
     count = payload[1]
-    offset = 2
+    offset = 5
     for _ in range(count):
         if offset + 1 > len(payload):
             raise ScreenError("дельта обрезана в списке строк", config.NAK_LENGTH)
@@ -256,12 +319,18 @@ def parse_delta(payload: bytes, base_seq: int, screen: Screen) -> Screen:
                 raise ScreenError("строка дельты без конца zlib-потока", config.NAK_LENGTH)
         except zlib.error as error:
             raise ScreenError(f"zlib строки: {error}", config.NAK_CRC) from None
-        if len(row_bytes) != updated.cols:
+        if len(row_bytes) == updated.cols:
+            updated.set_row(row, row_bytes)
+        elif len(row_bytes) == updated.cols * 2:
+            updated.set_row(
+                row, row_bytes[: updated.cols], row_bytes[updated.cols :]
+            )
+        else:
             raise ScreenError(
-                f"строка {len(row_bytes)} байт, ожидалось {updated.cols}",
+                f"строка {len(row_bytes)} байт, ожидалось {updated.cols} "
+                f"или {updated.cols * 2}",
                 config.NAK_LENGTH,
             )
-        updated.set_row(row, row_bytes)
         offset = len(payload) - len(dec.unused_data)
 
     if offset != len(payload):

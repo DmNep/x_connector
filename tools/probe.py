@@ -29,6 +29,7 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 from xconn_channel import config
+from xconn_channel.devcheck import DeviceError, emit
 from xconn_channel.demodulator import gate_level_from_noise, rms_level
 
 from tools.live import add_device_args, find_onset, open_live_device, play_and_capture
@@ -144,6 +145,9 @@ def agc_wander_db(samples, parts: int = 4) -> float:
 
 
 def goertzel_power(samples, hz: float, sample_rate: int = config.SAMPLE_RATE) -> float:
+    """Блочный Гёрцель на всём буфере. Не путать со SlideGoertzel в demodulator:
+    там скользящее окно на каждый отсчёт для PLL, здесь — одно число на тон.
+    """
     """Энергия тона Гёрцелем по целому фрагменту."""
     n = len(samples)
     if n < 2 or hz <= 0:
@@ -375,15 +379,7 @@ def analyze_loopback_sweep(
 
 
 def _write_report(text: str) -> None:
-    payload = text if text.endswith("\n") else text + "\n"
-    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
-    data = payload.encode(encoding, errors="replace")
-    buf = getattr(sys.stdout, "buffer", None)
-    if buf is not None:
-        buf.write(data)
-        buf.flush()
-    else:
-        sys.stdout.write(payload)
+    emit(text, sys.stdout)
 
 
 def _cmd_selftest() -> int:
@@ -437,7 +433,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _cmd_live(args: argparse.Namespace) -> int:
-    device = open_live_device(args)
+    try:
+        device = open_live_device(args)
+    except DeviceError as exc:
+        emit(str(exc))
+        return 2
     try:
         _write_report(run_live_probe(device))
     finally:
@@ -447,6 +447,9 @@ def _cmd_live(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.selftest and (args.live or args.wav):
+        emit("--selftest не сочетается с --live/--wav")
+        return 2
     if args.wav:
         return _cmd_wav(args.wav)
     if args.live:

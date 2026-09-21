@@ -53,6 +53,14 @@ class TestPrintAndControl(unittest.TestCase):
         vt.feed(b"x\x07")
         self.assertEqual(vt.screen.flags & FLAG_BEL, FLAG_BEL)
 
+    def test_sgr_reverse_marks_inverse(self) -> None:
+        vt = Vt100(2, 10)
+        vt.feed(b"\x1b[7mAB\x1b[0mC")
+        self.assertEqual(vt.screen.inverse[0], 1)
+        self.assertEqual(vt.screen.inverse[1], 1)
+        self.assertEqual(vt.screen.inverse[2], 0)
+        self.assertEqual(vt.screen.get(0, 0), ord("A"))
+
     def test_wrap_on_overflow(self) -> None:
         """DECAWM: печать за последней колонкой переносит строку."""
         vt = Vt100(3, 5)

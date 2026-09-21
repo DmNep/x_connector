@@ -34,7 +34,7 @@ from .demodulator import decimate
 from .modulator import upsample
 
 # Блок ввода-вывода: 20 мс. Короче T_IDLE (100 мс при base) — обрыв кадра
-# ловится за один-два блока, и короче T_CARRIER (250 мс) — ответ не ждёт
+# ловится за один-два блока, и короче T_CARRIER — ответ не ждёт
 # дольше блока после прихода.
 BLOCK_MS = 20
 BLOCK_SAMPLES_16K = round(BLOCK_MS * config.SAMPLE_RATE / 1000)  # 320
@@ -270,13 +270,15 @@ class WinmmAudio(AudioDevice):
         # съедает ядро и даёт джиттер GAP — короткая пауза достаточна
         # относительно блока 20 мс.
         deadline = time.monotonic() + 5.0
-        while not hdr.dwFlags & _WHDR_DONE:
-            if time.monotonic() > deadline:
-                raise OSError("waveOutWrite: таймаут ожидания WHDR_DONE")
-            time.sleep(0.001)
-        self._winmm.waveOutUnprepareHeader(
-            self._wave_out, ctypes.byref(hdr), ctypes.sizeof(hdr)
-        )
+        try:
+            while not hdr.dwFlags & _WHDR_DONE:
+                if time.monotonic() > deadline:
+                    raise OSError("waveOutWrite: таймаут ожидания WHDR_DONE")
+                time.sleep(0.001)
+        finally:
+            self._winmm.waveOutUnprepareHeader(
+                self._wave_out, ctypes.byref(hdr), ctypes.sizeof(hdr)
+            )
 
     def source(self) -> array.array | None:
         out = array.array("h")
@@ -341,15 +343,20 @@ class AlsaAudio(AudioDevice):
             ],
             stdin=subprocess.PIPE,
         )
-        self._arecord = subprocess.Popen(
-            [
-                "arecord", "-q",
-                "-D", capture_device,
-                "-f", "S16_LE", "-r", str(config.DEVICE_SAMPLE_RATE),
-                "-c", "1", "-t", "raw",
-            ],
-            stdout=subprocess.PIPE,
-        )
+        try:
+            self._arecord = subprocess.Popen(
+                [
+                    "arecord", "-q",
+                    "-D", capture_device,
+                    "-f", "S16_LE", "-r", str(config.DEVICE_SAMPLE_RATE),
+                    "-c", "1", "-t", "raw",
+                ],
+                stdout=subprocess.PIPE,
+            )
+        except Exception:
+            self._aplay.terminate()
+            self._aplay.wait()
+            raise
         self._pending = bytearray()
         # Неблокирующий захват: контракт source() — None, если блока ещё нет.
         # Блокирующий read держал бы T_CARRIER/T_IDLE на длительности read,
@@ -388,7 +395,11 @@ class AlsaAudio(AudioDevice):
             try:
                 proc.wait(timeout=1.0)
             except subprocess.TimeoutExpired:
-                proc.kill()
+                proc.terminate()
+                try:
+                    proc.wait(timeout=0.5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
 
 
 # --- Фабрика -------------------------------------------------------------------

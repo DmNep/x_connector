@@ -14,6 +14,7 @@ import time
 from xconn_channel import config
 from xconn_channel.audioio import BLOCK_SAMPLES_16K, open_audio
 from xconn_channel.demodulator import rms_level
+from xconn_channel.devcheck import DeviceError, check_winmm, parse_winmm_index
 
 # Хвост тишины: карта доигрывает буфер, последний тон не обрезается.
 DRAIN_MS = 400
@@ -47,7 +48,7 @@ def add_device_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--backend",
-        choices=("winmm", "alsa"),
+        choices=("winmm", "alsa", "wav"),
         default=None,
         help="обвязка; по умолчанию winmm на Windows, alsa на Linux",
     )
@@ -65,14 +66,12 @@ def open_live_device(args: argparse.Namespace):
         kwargs["capture_device"] = args.capture or "hw:0,0"
         kwargs["playback_device"] = args.playback or "hw:0,0"
     elif name == "winmm":
-        try:
-            kwargs["in_device"] = int(args.capture) if args.capture is not None else -1
-        except ValueError:
-            kwargs["in_device"] = -1
-        try:
-            kwargs["out_device"] = int(args.playback) if args.playback is not None else -1
-        except ValueError:
-            kwargs["out_device"] = -1
+        kwargs["in_device"] = parse_winmm_index(args.capture, "capture")
+        kwargs["out_device"] = parse_winmm_index(args.playback, "playback")
+        check_winmm(kwargs["in_device"], kwargs["out_device"])
+    elif name == "wav":
+        kwargs["in_path"] = args.capture
+        kwargs["out_path"] = args.playback
     return open_audio(name, **kwargs)
 
 

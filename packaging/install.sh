@@ -62,13 +62,14 @@ else
 fi
 
 cat > /etc/default/xconn-agent <<EOF
-XCONN_CAPTURE=$CAPTURE
-XCONN_PLAYBACK=$PLAYBACK
-PYTHONPATH=$PREFIX
+XCONN_PREFIX="$PREFIX"
+XCONN_CAPTURE="$CAPTURE"
+XCONN_PLAYBACK="$PLAYBACK"
+PYTHONPATH="$PREFIX"
 EOF
 
 if [ -d /etc/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
-    cp "$HERE/xconn-agent.service" /etc/systemd/system/xconn-agent.service
+    sed "s|/opt/x_connector|$PREFIX|g" "$HERE/xconn-agent.service" > /etc/systemd/system/xconn-agent.service
     systemctl daemon-reload
     systemctl enable xconn-agent.service
     echo "агент в $PREFIX, unit включён."

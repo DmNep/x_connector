@@ -328,6 +328,32 @@ class TestNakPath(unittest.TestCase):
         self.assertIsNotNone(cached)
 
 
+class TestSemanticNak(unittest.TestCase):
+    def test_state_nak_is_not_retried_as_crc(self) -> None:
+        """NAK_STATE на валидный REQ — ответ обмена, не порча кадра."""
+        wire = Wire()
+        master = MasterSession(wire.master_send, wire.master_receive, clock=FakeClock())
+
+        def handler(frame: Frame) -> tuple[int, bytes]:
+            return config.NAK, bytes((frame.seq, config.NAK_STATE))
+
+        agent = AgentSession(wire.agent_send, wire.agent_receive, handler)
+        wire.attach(agent)
+        reply = master.exchange(config.RESIZE, bytes((0, 80)))
+        self.assertEqual(reply.type, config.NAK)
+        self.assertEqual(reply.payload[1], config.NAK_STATE)
+        self.assertEqual(master.seq, 1)
+        self.assertEqual(master.stats["retries"], 0)
+
+
+class TestTimings(unittest.TestCase):
+    def test_carrier_covers_pump(self) -> None:
+        self.assertGreaterEqual(
+            config.T_CARRIER_MS,
+            config.PUMP_WAIT_MS + config.PUMP_IDLE_MS + config.T_LEAD_MS,
+        )
+
+
 class TestFullLoop(unittest.TestCase):
     """Сквозной прогон под нагрузкой: 20 обменов с потерями и порчей.
 
