@@ -4,3 +4,6 @@ __pycache__/
 .venv/
 venv/
 /drafts/
+/packaging/python-linux/*.tar.gz
+/packaging/python-linux/*.tar.gz.part
+/packaging/alsa-debs/*/*.deb

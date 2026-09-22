@@ -1,10 +1,10 @@
 ---
 status: idle
 worktree: D:/projects/x_connector
-branch: wip/cursor-review-fixes
+branch: wip/cursor-python-stick
 task: ""
 hands_off: []
-updated: 2026-09-21T21:40+03:00
+updated: 2026-09-23T01:15+03:00
 ---
 
-Свободен. Находки ревью закрыты на `wip/cursor-review-fixes`.
+Свободен. Ветка запушена на origin. Слияния в master не было.

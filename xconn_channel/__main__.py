@@ -16,6 +16,7 @@ import threading
 from . import __version__, config
 from .audioio import open_audio
 from .client import Client
+from .session import SessionError
 from .devcheck import (
     DeviceError,
     check_winmm,
@@ -26,7 +27,7 @@ from .devcheck import (
 )
 from .host import AgentHost
 from .shell import open_shell
-from .stick import StickError, list_removable, write_report, write_stick
+from .stick import StickError, ensure_linux_python, list_removable, write_report, write_stick
 from .transport import AudioTransport, SampleLink
 
 
@@ -73,9 +74,27 @@ def _run_commands(client: Client, commands: list[str], repl: bool) -> int:
                     print("pong")
                     continue
                 elif line.startswith(".refresh"):
-                    client.refresh()
+                    try:
+                        client.refresh()
+                    except SessionError as exc:
+                        print(exc)
+                        continue
+                elif line.startswith(".resize "):
+                    parts = line.split()
+                    if len(parts) != 3:
+                        print("usage: .resize ROWS COLS")
+                        continue
+                    try:
+                        client.resize(int(parts[1]), int(parts[2]))
+                    except (ValueError, SessionError) as exc:
+                        print(exc)
+                        continue
                 else:
-                    client.cmd(line)
+                    try:
+                        client.cmd(line)
+                    except SessionError as exc:
+                        print(exc)
+                        continue
                 _print_screen(client)
         except (EOFError, KeyboardInterrupt):
             sys.stdout.write("\n")
@@ -168,6 +187,8 @@ def _cmd_stick(args: argparse.Namespace) -> int:
             )
         return 2
     try:
+        if not args.no_fetch:
+            ensure_linux_python(log=lambda msg: sys.stderr.write(msg + "\n"))
         written = write_stick(dest)
     except StickError as exc:
         sys.stderr.write(str(exc) + "\n")
@@ -272,6 +293,11 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="?",
         default=None,
         help="корень флешки, например E:\\",
+    )
+    p_stick.add_argument(
+        "--no-fetch",
+        action="store_true",
+        help="не скачивать Linux python3, только то что уже в кэше",
     )
     p_stick.set_defaults(func=_cmd_stick)
 
