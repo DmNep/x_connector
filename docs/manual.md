@@ -104,7 +104,7 @@ py -m unittest discover -s tests
 py -m xconn_channel stick E:\
 ```
 
-Без пути команда перечислит съёмные диски Windows. На флешку попадают `xconn_channel/`, `install.sh`, unit systemd и `README.txt`. Сеть на этом шаге нужна только если вы заранее кладёте `.deb` python3 в `python-debs/`.
+Без пути команда перечислит съёмные диски Windows. На флешку попадают `xconn_channel/`, `install.sh`, unit systemd, `README.txt`, автономный Linux CPython (`python-linux/`, x86_64 и aarch64) и `alsa-debs/` (`aplay`/`arecord`/`amixer` для Ubuntu jammy/noble/resolute). На этом шаге ноутбуку нужен интернет, если кэша ещё нет. Повторная запись без сети: кэш уже лежит в `packaging/python-linux/` и `packaging/alsa-debs/`, либо `stick --no-fetch`.
 
 ### 4.2 Установка на сервер
 
@@ -117,7 +117,7 @@ cd /mnt/usb
 sudo sh install.sh
 ```
 
-Скрипт копирует пакет в `/opt/x_connector`, заводит системного пользователя `xconn` в группе `audio`, ставит `xconn-agent.service` и включает его. `apt` и `pip` не вызываются. Если `python3` нет — `dpkg -i python-debs/*.deb` с флешки.
+Скрипт копирует пакет в `/opt/x_connector`, распаковывает встроенный python3 в `/opt/x_connector/python`, при отсутствии `aplay` ставит `alsa-utils` из `alsa-debs/$VERSION_CODENAME` (`dpkg -i`, без apt), заводит пользователя `xconn` в группе `audio`, ставит `xconn-agent.service`. Повторный `install.sh` не сбрасывает уже прописанные `XCONN_CAPTURE` / `XCONN_PLAYBACK`.
 
 Устройства:
 
@@ -206,7 +206,17 @@ py -m xconn_channel client --capture 1 --playback 0 --repl
 py -m xconn_channel client -c "ip a" -c "ip r"
 ```
 
-После `connect` печатается текущая сетка. Дальше — как в loopback: команды, `.key`, `.ping`, `.refresh`.
+После `connect` печатается текущая сетка. Дальше — как в loopback: команды, `.key`, `.ping`, `.refresh`, `.resize`.
+
+### 6.4 Что показало железо (2026-09-22)
+
+Сервер: Ubuntu 26.04 (`resolute`), Realtek ALC897. Ноутбук: Windows, Realtek, улучшения микрофона выключены.
+
+- Карта **0** — HDMI монитора. Аналог — карта **1**, устройства `pcmC1D0c` / `pcmC1D0p`.
+- Чистый `hw:1,0` с `-c 1` даёт `Channels count non available`. Рабочий путь: `plughw:1,0`.
+- Без пакета `alsa-utils` агент падает: `No such file or directory: 'aplay'`. Пакеты лежат на флешке, не через apt.
+- `MAX_PAYLOAD` 240 байт: пустой `.ping` проходит, полный 24×80 после motd — `nak=0x03`. Живой обмен: `.resize 12 40` или `8 32`.
+- Повторный HELO после такого NAK часто молчит, пока не `systemctl restart xconn-agent`.
 
 ### 6.3 Что происходит при рукопожатии
 
@@ -235,6 +245,7 @@ py -m xconn_channel [-V] {loopback|client|agent|stick|devices} [опции]
 | `--capture` | client, agent | вход: номер winmm или `hw:N,M` |
 | `--playback` | client, agent | выход: номер winmm или `hw:N,M` |
 | `--shell …` | loopback, agent | argv оболочки агента, всё после флага |
+| `--no-fetch` | stick | не скачивать Linux python3, только кэш |
 | `devices` | команда | список входов/выходов; если чего-то нет — сразу текст, что подключить |
 
 В `--repl`:
@@ -246,6 +257,7 @@ py -m xconn_channel [-V] {loopback|client|agent|stick|devices} [опции]
 | `.put LOCAL [NAME]` | файл на сервер в `inbox/` |
 | `.ping` | `PING` / `PONG`, экран не перерисовывается |
 | `.refresh` | полный снимок экрана |
+| `.resize R C` | размер сетки PTY (например `.resize 12 40`) |
 | `.quit` / `.exit` | выход из REPL |
 
 Имена клавиш: `ctrl-c`, `ctrl-d`, `ctrl-l`, `ctrl-z`, `tab`, `enter`, `esc`, `up`, `down`, `left`, `right`, `backspace`, `home`, `end`.
@@ -350,13 +362,19 @@ nft list ruleset
 | Псевдографика в консоли Windows кракозябрами | OEM-кодировка консоли vs cp437; на сетку в памяти не влияет |
 | Канал «есть», команды исполняются дважды | не должно: повтор того же `seq` отдаёт закешированный ответ, не второй запуск |
 | После перетыкания кабеля мёртвый эфир | заново запустить клиент (`HELO` с `probe`); агента переставлять не нужно |
+| `aplay: No such file` / агент код 2 | нет `alsa-utils`; `sudo sh install.sh` с флешки, где есть `alsa-debs/` |
+| `Channels count non available` | `hw:` не умеет моно; в `/etc/default/xconn-agent` поставьте `plughw:N,M` |
+| HDMI в `hw:0,0`, аналог на другой карте | смотреть `/proc/asound/pcm`: ALC/Analog, не HDMI; типично `hw:1,0` |
+| `nak=0x03` на `.refresh` / команде | снимок 24×80 не влез в 240 байт; `.resize 12 40` или `8 32` |
+| После NAK агент не отвечает на HELO | `sudo systemctl restart xconn-agent`, на ноутбуке один клиент |
 
 Логи агента в этой версии идут в stderr процесса. Отдельного syslog-юнита в репозитории нет.
 
 ## 13. Чего в этой версии нет
 
-- Прогона на реальных кабелях и приёмки BER.
-- Скачивания `.deb` python3 на ноутбук (каталог `python-debs/` на флешке можно заполнить руками).
+- Приёмки BER и калибровки `probe --live` на этом тракте.
+- Нарезки снимка экрана: 24×80 после motd не влезает в 240 байт.
+- Открытия ALSA без `aplay` (стерео на чистом `hw:`).
 - HID-клавиатуры (микроконтроллер) — не входит в первую сборку.
 - Шифрования, полного дуплекса, SSH/IP поверх звука — это не «ещё не сделано», а сознательный отказ.
 

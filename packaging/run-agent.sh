@@ -10,6 +10,11 @@ if [ -f /etc/default/xconn-agent ]; then
 fi
 CAPTURE=${XCONN_CAPTURE:-hw:0,0}
 PLAYBACK=${XCONN_PLAYBACK:-hw:0,0}
+if [ -x "$PREFIX/python/bin/python3" ]; then
+    PYTHON="$PREFIX/python/bin/python3"
+else
+    PYTHON=python3
+fi
 export PYTHONPATH="${PYTHONPATH:-$PREFIX}"
 cd "$PREFIX"
-exec python3 -m xconn_channel agent --capture "$CAPTURE" --playback "$PLAYBACK"
+exec "$PYTHON" -m xconn_channel agent --capture "$CAPTURE" --playback "$PLAYBACK"

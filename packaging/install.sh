@@ -4,8 +4,10 @@
 set -eu
 
 PREFIX="${PREFIX:-/opt/x_connector}"
-CAPTURE="${XCONN_CAPTURE:-hw:0,0}"
-PLAYBACK="${XCONN_PLAYBACK:-hw:0,0}"
+ENV_CAPTURE="${XCONN_CAPTURE:-}"
+ENV_PLAYBACK="${XCONN_PLAYBACK:-}"
+CAPTURE="hw:0,0"
+PLAYBACK="hw:0,0"
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "нужен root: sudo sh $0" >&2
@@ -19,24 +21,124 @@ if [ ! -d "$HERE/xconn_channel" ]; then
     exit 1
 fi
 
-have_python() {
+arch=$(uname -m)
+case "$arch" in
+    x86_64|amd64) py_key=x86_64 ;;
+    aarch64|arm64) py_key=aarch64 ;;
+    *) py_key= ;;
+esac
+
+have_system_python() {
     command -v python3 >/dev/null 2>&1
 }
 
-if have_python; then
-    :
-elif [ -d "$HERE/python-debs" ]; then
+install_bundled_python() {
+    if [ -z "$py_key" ]; then
+        return 1
+    fi
+    if [ ! -d "$HERE/python-linux" ]; then
+        return 1
+    fi
+    set -- "$HERE/python-linux/"*"${py_key}"*install_only_stripped.tar.gz
+    if [ ! -e "$1" ]; then
+        return 1
+    fi
+    echo "ставлю встроенный python3 ($arch) в $PREFIX/python"
+    mkdir -p "$PREFIX"
+    rm -rf "$PREFIX/python"
+    tar -xzf "$1" -C "$PREFIX"
+    if [ ! -x "$PREFIX/python/bin/python3" ]; then
+        echo "архив python3 распаковался без bin/python3" >&2
+        return 1
+    fi
+    return 0
+}
+
+install_alsa_debs() {
+    if command -v aplay >/dev/null 2>&1 && command -v arecord >/dev/null 2>&1; then
+        return 0
+    fi
+    code=""
+    if [ -f /etc/os-release ]; then
+        # shellcheck disable=SC1091
+        . /etc/os-release
+        code="${VERSION_CODENAME:-}"
+    fi
+    if [ -z "$code" ] || [ ! -d "$HERE/alsa-debs/$code" ]; then
+        for fallback in resolute noble jammy; do
+            if [ -d "$HERE/alsa-debs/$fallback" ]; then
+                echo "alsa-debs/$code нет, пробую $fallback"
+                code=$fallback
+                break
+            fi
+        done
+    fi
+    if [ -z "$code" ] || [ ! -d "$HERE/alsa-debs/$code" ]; then
+        echo "aplay/arecord нет, на флешке нет alsa-debs/$code" >&2
+        echo "на ноутбуке: py -m xconn_channel stick" >&2
+        return 1
+    fi
+    set -- "$HERE/alsa-debs/$code"/*.deb
+    if [ ! -e "$1" ]; then
+        echo "каталог alsa-debs/$code пуст" >&2
+        return 1
+    fi
+    echo "ставлю alsa-utils с флешки ($code, dpkg -i, без apt)"
+    dpkg -i "$@"
+}
+
+install_python_debs() {
+    if [ ! -d "$HERE/python-debs" ]; then
+        return 1
+    fi
     set -- "$HERE/python-debs"/*.deb
-    if [ -e "$1" ]; then
-        echo "python3 нет, ставлю пакеты с флешки (dpkg -i, без apt)"
-        dpkg -i "$@"
+    if [ ! -e "$1" ]; then
+        return 1
+    fi
+    echo "python3 нет, ставлю пакеты с флешки (dpkg -i, без apt)"
+    dpkg -i "$@"
+}
+
+if ! install_bundled_python; then
+    if have_system_python; then
+        :
+    elif install_python_debs; then
+        :
     fi
 fi
 
-if ! have_python; then
-    echo "на сервере нет python3." >&2
-    echo "на ноутбуке скачайте .deb в python-debs/ на этой флешке и повторите." >&2
+if [ -x "$PREFIX/python/bin/python3" ]; then
+    PYTHON="$PREFIX/python/bin/python3"
+elif have_system_python; then
+    PYTHON=python3
+else
+    echo "на сервере нет python3 и на флешке нет архива под $arch." >&2
+    echo "на ноутбуке: py -m xconn_channel stick <буква>:  (нужен интернет)" >&2
     exit 1
+fi
+
+if ! install_alsa_debs; then
+    if command -v aplay >/dev/null 2>&1 && command -v arecord >/dev/null 2>&1; then
+        :
+    else
+        echo "на сервере нет aplay/arecord. без них агент не откроет звуковую карту." >&2
+        exit 1
+    fi
+fi
+
+if [ -f /etc/default/xconn-agent ]; then
+    set -a
+    # shellcheck disable=SC1091
+    . /etc/default/xconn-agent
+    set +a
+    CAPTURE="${XCONN_CAPTURE:-$CAPTURE}"
+    PLAYBACK="${XCONN_PLAYBACK:-$PLAYBACK}"
+fi
+if [ -n "$ENV_CAPTURE" ]; then
+    CAPTURE="$ENV_CAPTURE"
+fi
+if [ -n "$ENV_PLAYBACK" ]; then
+    PLAYBACK="$ENV_PLAYBACK"
 fi
 
 mkdir -p "$PREFIX"
@@ -80,4 +182,4 @@ else
     echo "systemd нет — запуск: $PREFIX/run-agent.sh"
 fi
 
-PYTHONPATH="$PREFIX" python3 -c "import xconn_channel; print('xconn_channel', xconn_channel.__version__)"
+PYTHONPATH="$PREFIX" "$PYTHON" -c "import xconn_channel; print('xconn_channel', xconn_channel.__version__)"

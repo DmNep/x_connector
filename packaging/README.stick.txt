@@ -7,6 +7,13 @@ x_connector — установка агента с этой флешки
     cd /mnt/usb
     sudo sh install.sh
 
+На флешке лежит автономный Linux python3 (x86_64 и aarch64)
+и alsa-utils (aplay/arecord/amixer) для Ubuntu 22.04, 24.04 и 26.04.
+install.sh ставит python в /opt/x_connector/python и, если нет aplay,
+пакеты из alsa-debs/. Системный python3 не требуется. apt и pip
+не вызываются. Повторный install.sh не сбрасывает hw: из
+/etc/default/xconn-agent.
+
 Устройства звука:
 
     arecord -l
@@ -25,7 +32,3 @@ x_connector — установка агента с этой флешки
 Кабели по схеме X, на ноутбуке:
 
     py -m xconn_channel client --repl
-
-Если на сервере нет python3, на ноутбуке (где интернет есть) скачайте
-пакеты python3 и зависимости в каталог python-debs/ на этой флешке.
-install.sh поставит их через dpkg -i, без apt и без сети.

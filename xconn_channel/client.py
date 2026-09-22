@@ -55,8 +55,9 @@ class Client:
     def _exchange_screen(self, frame_type: int, payload: bytes = b"") -> Screen:
         reply = self.master.exchange(frame_type, payload, accept=self._apply)
         if reply.type == config.NAK:
+            code = reply.payload[1] if len(reply.payload) >= 2 else -1
             raise SessionError(
-                f"агент отверг кадр seq={reply.seq}", 1, reply.seq
+                f"агент отверг кадр seq={reply.seq} nak={code:#04x}", 1, reply.seq
             )
         assert self.screen is not None
         return self.screen
@@ -146,8 +147,9 @@ class Client:
                 )
             return self.screen
         if reply.type == config.NAK:
+            code = reply.payload[1] if len(reply.payload) >= 2 else -1
             raise SessionError(
-                f"агент отверг кадр seq={reply.seq}", 1, reply.seq
+                f"агент отверг кадр seq={reply.seq} nak={code:#04x}", 1, reply.seq
             )
         raise SessionError(
             f"неожиданный ответ {reply.type_name} seq={reply.seq}",
