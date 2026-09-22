@@ -17,11 +17,15 @@ from xconn_channel import config
 
 from tools.ber import (
     BENIGN_NOISE,
+    add_noise,
     bit_errors,
+    build_parser,
     format_report,
     measure_train,
+    modulate_train,
     prbs_payload,
     run_selftest,
+    score_capture,
     selftest_ok,
 )
 
@@ -62,6 +66,42 @@ class TestLoopback(unittest.TestCase):
     def test_crushing_noise_loses_frames(self) -> None:
         row = measure_train(config.BASE, n_frames=4, noise_sigma=12000.0, seed=7)
         self.assertGreater(row["fer"], 0.0)
+
+    def test_snr_reflects_measured_noise_not_injected_sigma(self) -> None:
+        """SNR берётся из измеренного шума, а не из параметра noise_sigma (12).
+
+        measure_live() всегда зовёт score_capture(..., noise_sigma=0.0) —
+        на живом захвате инъекции нет, реальный шум уже сидит в отсчётах.
+        Раньше snr_db получал noise_sigma напрямую, и для любого --live
+        прогона SNR выходил бесконечным независимо от реальной линии.
+        """
+        payloads = [prbs_payload(20, 9)]
+        noisy = add_noise(modulate_train(config.BASE, payloads), 500.0, 9)
+        # Как measure_live(): noise_sigma=0.0, хотя шум в samples есть.
+        row = score_capture(config.BASE, payloads, noisy, noise_sigma=0.0)
+        self.assertNotEqual(row["snr_db"], float("inf"))
+
+    def test_snr_infinite_on_truly_clean_capture(self) -> None:
+        payloads = [prbs_payload(20, 3)]
+        clean = modulate_train(config.BASE, payloads)
+        row = score_capture(config.BASE, payloads, clean, noise_sigma=0.0)
+        self.assertEqual(row["snr_db"], float("inf"))
+
+
+class TestFramesValidation(unittest.TestCase):
+    """--frames <= 0 должен быть ошибкой CLI, а не тихим 0-кадровым PASS (12)."""
+
+    def test_zero_frames_rejected(self) -> None:
+        with self.assertRaises(SystemExit):
+            build_parser().parse_args(["--selftest", "--frames", "0"])
+
+    def test_negative_frames_rejected(self) -> None:
+        with self.assertRaises(SystemExit):
+            build_parser().parse_args(["--selftest", "--frames", "-3"])
+
+    def test_positive_frames_accepted(self) -> None:
+        args = build_parser().parse_args(["--selftest", "--frames", "5"])
+        self.assertEqual(args.frames, 5)
 
 
 class TestReport(unittest.TestCase):

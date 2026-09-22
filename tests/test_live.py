@@ -45,8 +45,12 @@ class TestEchoRoundtrip(unittest.TestCase):
         self.assertGreaterEqual(onset, 700)
         self.assertLess(onset, 800 + 80)
 
-    def test_onset_silence_is_zero(self) -> None:
-        self.assertEqual(find_onset(array.array("h", [0] * 400)), 0)
+    def test_onset_silence_is_none(self) -> None:
+        """Тишина — не «фронт на нулевом отсчёте», а «сигнала нет» (12)."""
+        self.assertIsNone(find_onset(array.array("h", [0] * 400)))
+
+    def test_onset_too_short_is_none(self) -> None:
+        self.assertIsNone(find_onset(array.array("h", [0] * 10)))
 
 
 class TestProbeLiveEcho(unittest.TestCase):
@@ -63,6 +67,18 @@ class TestProbeLiveEcho(unittest.TestCase):
         text = run_live_probe(EchoDevice())
         self.assertIn("GATE_LEVEL", text)
         self.assertIn("1200", text)
+
+    def test_dead_loopback_raises_not_silent_report(self) -> None:
+        """Немая петля (нет тона совсем) обязана явно упасть, не отчитаться (12).
+
+        До фикса find_onset()==0 для «нет сигнала» был неотличим от
+        «фронт на нулевом отсчёте», и slice_live_capture тихо строила
+        отчёт из тишины/шума вместо явной ошибки.
+        """
+        stim = build_live_stimulus(tone_ms=40, silence_ms=50, gap_ms=10, tail_ms=20)
+        silence = array.array("h", [0] * len(stim["samples"]))
+        with self.assertRaises(SystemExit):
+            slice_live_capture(silence, stim)
 
 
 class TestBerLiveEcho(unittest.TestCase):

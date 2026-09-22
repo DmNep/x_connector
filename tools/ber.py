@@ -86,12 +86,19 @@ def modulate_train(
     return stream
 
 
-def snr_db(signal_rms: float, noise_sigma: float) -> float:
-    if noise_sigma <= 0:
+def snr_db(signal_rms: float, noise_level: float) -> float:
+    """SNR по измеренному уровню шума, не по заданной sigma инъекции.
+
+    noise_level обязан быть измерением (RMS тишины на входе), а не
+    параметром add_noise(): на живом захвате инъекции нет, sigma всегда
+    0, и SNR от неё был бы всегда бесконечен независимо от реального
+    шума в линии.
+    """
+    if noise_level <= 0:
         return math.inf
     if signal_rms <= 0:
         return float("-inf")
-    return 20.0 * math.log10(signal_rms / noise_sigma)
+    return 20.0 * math.log10(signal_rms / noise_level)
 
 
 def score_capture(
@@ -145,7 +152,7 @@ def score_capture(
         "ber": ber,
         "fer": fer,
         "noise_sigma": noise_sigma,
-        "snr_db": snr_db(signal_rms, noise_sigma),
+        "snr_db": snr_db(signal_rms, noise_floor),
         "gate_level": gate,
     }
 
@@ -237,6 +244,20 @@ def selftest_ok(rows: list[dict]) -> bool:
     return all(row["ber"] == 0.0 and row["fer"] == 0.0 for row in rows)
 
 
+def _positive_int(value: str) -> int:
+    """argparse type=: --frames <= 0 даёт пустой прогон, не ошибку (12).
+
+    range(0) и range(отрицательное) — пустая последовательность, поэтому
+    без этой проверки payloads=[] и ber/fer оба тихо становятся 0.0 —
+    selftest_ok() засчитывает это как чистый PASS при нуле реально
+    проверенных кадров.
+    """
+    n = int(value)
+    if n <= 0:
+        raise argparse.ArgumentTypeError(f"--frames обязан быть > 0, получено {n}")
+    return n
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ber.py",
@@ -249,9 +270,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--frames",
-        type=int,
+        type=_positive_int,
         default=DEFAULT_FRAMES,
-        help=f"кадров в прогоне (по умолчанию {DEFAULT_FRAMES})",
+        help=f"кадров в прогоне, > 0 (по умолчанию {DEFAULT_FRAMES})",
     )
     parser.add_argument(
         "--noise",

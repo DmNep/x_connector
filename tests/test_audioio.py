@@ -12,9 +12,10 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 from xconn_channel import config, framing
-from xconn_channel.audioio import WavAudio
+from xconn_channel.audioio import AlsaAudio, WavAudio
 from xconn_channel.demodulator import decimate, demodulate_frame
 from xconn_channel.modulator import Modulator, upsample
 from xconn_channel.transport import AudioTransport
@@ -111,6 +112,37 @@ class TestWavAudio(unittest.TestCase):
     def test_missing_input_is_silence(self) -> None:
         inp = WavAudio(in_path="nonexistent.wav")
         self.assertIsNone(inp.source())
+
+
+class TestAlsaAudioInitCleanup(unittest.TestCase):
+    """AlsaAudio.__init__ не должен осиротить aplay, если arecord не поднялся.
+
+    Реальные aplay/arecord тут не нужны — subprocess.Popen подменяется
+    мок-объектами, проверяется только порядок вызовов конструктора.
+    """
+
+    def test_arecord_failure_terminates_already_started_aplay(self) -> None:
+        fake_aplay = mock.Mock()
+        with mock.patch(
+            "xconn_channel.audioio.subprocess.Popen",
+            side_effect=[fake_aplay, FileNotFoundError("arecord")],
+        ):
+            with self.assertRaises(FileNotFoundError):
+                AlsaAudio()
+        fake_aplay.terminate.assert_called_once()
+        fake_aplay.wait.assert_called_once()
+
+    def test_both_start_ok_aplay_not_touched(self) -> None:
+        fake_aplay = mock.Mock()
+        fake_arecord = mock.Mock()
+        fake_arecord.stdout.fileno.return_value = 0
+        with mock.patch(
+            "xconn_channel.audioio.subprocess.Popen",
+            side_effect=[fake_aplay, fake_arecord],
+        ):
+            with mock.patch("xconn_channel.audioio.os.set_blocking"):
+                AlsaAudio()
+        fake_aplay.terminate.assert_not_called()
 
 
 if __name__ == "__main__":

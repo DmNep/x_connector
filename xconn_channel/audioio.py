@@ -354,6 +354,11 @@ class AlsaAudio(AudioDevice):
                 stdout=subprocess.PIPE,
             )
         except Exception:
+            # aplay уже запущен и держит устройство воспроизведения; раз
+            # arecord не поднялся, объект AlsaAudio не будет создан и
+            # некому будет вызвать close() — глушим aplay сами, иначе
+            # следующий запуск застаёт устройство занятым осиротевшим
+            # процессом (docs/protocol.md 2.2).
             self._aplay.terminate()
             self._aplay.wait()
             raise
