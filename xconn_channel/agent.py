@@ -62,6 +62,11 @@ class AgentCore:
         self._pump_idle_ms = pump_idle_ms
         self._file_root = file_root
         self._xfer = None
+        self._xfer_out = None
+        self._parts: list[bytes] | None = None
+        self._part_kind = 0
+        self._part_index = 0
+        self._part_base: Screen | None = None
         self._last_reply: tuple[int, bytes] | None = None
         self.stats = {
             "cmds": 0,
@@ -119,6 +124,14 @@ class AgentCore:
 
     # --- обработка кадров --------------------------------------------------------
 
+    def reset_session(self) -> None:
+        """Сброс нарезки и файлов при новом HELO — старый обмен мёртв."""
+        self._parts = None
+        self._part_base = None
+        self._xfer = None
+        self._xfer_out = None
+        self._base = None
+
     def handle(self, frame: Frame) -> tuple[int, bytes]:
         """Handler для AgentSession: CMD/KEY/RESIZE/FILE_* -> ответ."""
         reply = self._handle(frame)
@@ -126,6 +139,9 @@ class AgentCore:
         return reply
 
     def _handle(self, frame: Frame) -> tuple[int, bytes]:
+        if frame.type != config.SCREEN_MORE:
+            self._parts = None
+            self._part_base = None
         if frame.type == config.CMD:
             self.stats["cmds"] += 1
             self._write_pty(frame.payload)
@@ -157,7 +173,15 @@ class AgentCore:
                 self.pump()
                 return self._snapshot(frame.seq)
             return config.PONG, b""
-        if frame.type in (config.FILE_OPEN, config.FILE_DATA, config.FILE_CLOSE):
+        if frame.type == config.SCREEN_MORE:
+            return self._next_part(frame.seq)
+        if frame.type in (
+            config.FILE_OPEN,
+            config.FILE_DATA,
+            config.FILE_CLOSE,
+            config.FILE_GET,
+            config.FILE_PULL,
+        ):
             return self._handle_file(frame)
         return config.NAK, bytes((frame.seq, config.NAK_TYPE))
 
@@ -170,7 +194,11 @@ class AgentCore:
                 return self._file_open(frame)
             if frame.type == config.FILE_DATA:
                 return self._file_data(frame)
-            return self._file_close(frame)
+            if frame.type == config.FILE_CLOSE:
+                return self._file_close(frame)
+            if frame.type == config.FILE_GET:
+                return self._file_get(frame)
+            return self._file_pull(frame)
         except TransferError:
             return config.NAK, bytes((frame.seq, config.NAK_LENGTH))
 
@@ -217,6 +245,28 @@ class AgentCore:
         self.stats["files"] += 1
         return config.NOTE, bytes((config.NOTE_OK,))
 
+    def _file_get(self, frame: Frame) -> tuple[int, bytes]:
+        name = transfer.decode_get(frame.payload)
+        path = transfer.resolve_get_path(self._file_root, name)
+        if not path.is_file():
+            return config.NAK, bytes((frame.seq, config.NAK_STATE))
+        data = path.read_bytes()
+        if len(data) > config.FILE_MAX_BYTES:
+            return config.NAK, bytes((frame.seq, config.NAK_LENGTH))
+        digest = transfer.crc32(data)
+        self._xfer_out = {"data": data, "digest": digest}
+        return config.FILE_OFFER, transfer.encode_offer(len(data), digest)
+
+    def _file_pull(self, frame: Frame) -> tuple[int, bytes]:
+        if self._xfer_out is None:
+            return config.NAK, bytes((frame.seq, config.NAK_STATE))
+        offset = transfer.decode_pull(frame.payload)
+        data = self._xfer_out["data"]
+        if offset > len(data):
+            return config.NAK, bytes((frame.seq, config.NAK_LENGTH))
+        chunk = data[offset : offset + config.FILE_CHUNK]
+        return config.FILE_DATA, transfer.encode_data(offset, chunk)
+
     def replay(self) -> tuple[int, bytes]:
         """Ответ на повторный REQ: полный снимок, кроме FILE/PONG/NAK.
 
@@ -224,20 +274,27 @@ class AgentCore:
         экрана обязан быть SCREEN_FULL (8.2, 6.2). Повтор FILE_* и PING
         отдаёт тот же NOTE/PONG/NAK, иначе клиент примет сетку за статус.
         """
+        if self._parts is not None:
+            return config.SCREEN_PART, screen.encode_part(
+                self._part_kind,
+                self._part_index,
+                len(self._parts),
+                self._parts[self._part_index],
+            )
         if self._last_reply is not None:
             rtype = self._last_reply[0]
-            if rtype not in (config.SCREEN_FULL, config.SCREEN_DELTA):
+            if rtype not in (
+                config.SCREEN_FULL,
+                config.SCREEN_DELTA,
+                config.SCREEN_PART,
+            ):
                 return self._last_reply
         try:
             return config.SCREEN_FULL, screen.serialize_full(self._vt.screen)
         except ValueError:
-            # Экран несжимаем даже целиком: сегментации снимков ещё нет
-            # (docs/protocol.md 7), деградировать дальше некуда — NAK,
-            # а не необработанное исключение наружу (AGENTS.md 3.2: агент
-            # обязан работать без присмотра). seq в payload недоступен —
-            # callback без аргументов; клиент решает по seq заголовка,
-            # который проставляет вызывающий сессии, а не по payload.
-            return config.NAK, bytes((0, config.NAK_LENGTH))
+            return self._emit_parts(
+                0, config.SCREEN_PART_FULL, screen.pack_full(self._vt.screen)
+            )
 
     # --- снимки --------------------------------------------------------------------
 
@@ -252,15 +309,10 @@ class AgentCore:
             try:
                 payload = screen.serialize_full(current)
             except ValueError:
-                # Тот же случай, что и в делегировании ниже: даже полный
-                # снимок не влезает в MAX_PAYLOAD (несжимаемый экран).
-                # База не тронута, дальше деградировать некуда — NAK
-                # вместо падения процесса (AGENTS.md 3.2).
-                return config.NAK, bytes((seq, config.NAK_LENGTH))
-            self._base = Screen(current.rows, current.cols)
-            self._base.cells[:] = current.cells
-            self._base.copy_look(current)
-            self._base_seq = seq
+                return self._emit_parts(
+                    seq, config.SCREEN_PART_FULL, screen.pack_full(current)
+                )
+            self._commit_base(current, seq)
             self.stats["fulls"] += 1
             current.flags &= ~FLAG_BEL
             self._base.flags = current.flags
@@ -282,3 +334,46 @@ class AgentCore:
         current.flags &= ~FLAG_BEL
         self._base.flags = current.flags
         return config.SCREEN_DELTA, payload
+
+    def _copy_screen(self, current: Screen) -> Screen:
+        snap = Screen(current.rows, current.cols)
+        snap.cells[:] = current.cells
+        snap.copy_look(current)
+        return snap
+
+    def _commit_base(self, current: Screen, seq: int) -> None:
+        self._base = self._copy_screen(current)
+        self._base_seq = seq
+
+    def _emit_parts(self, seq: int, kind: int, blob: bytes) -> tuple[int, bytes]:
+        parts = screen.split_packed(blob)
+        self._parts = parts
+        self._part_kind = kind
+        self._part_index = 0
+        self._part_base = self._copy_screen(self._vt.screen)
+        payload = screen.encode_part(kind, 0, len(parts), parts[0])
+        if len(parts) == 1:
+            self._commit_base(self._part_base, seq)
+            self._parts = None
+            self._part_base = None
+            self.stats["fulls"] += 1
+        return config.SCREEN_PART, payload
+
+    def _next_part(self, seq: int) -> tuple[int, bytes]:
+        if self._parts is None:
+            return config.NAK, bytes((seq, config.NAK_STATE))
+        nxt = self._part_index + 1
+        if nxt >= len(self._parts):
+            self._parts = None
+            self._part_base = None
+            return config.NAK, bytes((seq, config.NAK_STATE))
+        self._part_index = nxt
+        payload = screen.encode_part(
+            self._part_kind, nxt, len(self._parts), self._parts[nxt]
+        )
+        if nxt == len(self._parts) - 1 and self._part_base is not None:
+            self._commit_base(self._part_base, seq)
+            self._parts = None
+            self._part_base = None
+            self.stats["fulls"] += 1
+        return config.SCREEN_PART, payload

@@ -16,6 +16,7 @@ import threading
 from . import __version__, config
 from .audioio import open_audio
 from .client import Client
+from .handshake import HandshakeError
 from .session import SessionError
 from .devcheck import (
     DeviceError,
@@ -68,6 +69,19 @@ def _run_commands(client: Client, commands: list[str], repl: bool) -> int:
                     remote = parts[2] if len(parts) > 2 else None
                     client.put(parts[1], remote)
                     print("put ok")
+                    continue
+                elif line.startswith(".get "):
+                    parts = line.split()
+                    if len(parts) < 2:
+                        print("usage: .get REMOTE [LOCAL]")
+                        continue
+                    local = parts[2] if len(parts) > 2 else parts[1].replace("\\", "/").rsplit("/", 1)[-1]
+                    try:
+                        client.get(parts[1], local)
+                    except SessionError as exc:
+                        print(exc)
+                        continue
+                    print("get ok", local)
                     continue
                 elif line.startswith(".ping"):
                     client.ping()
@@ -167,7 +181,11 @@ def _cmd_client(args: argparse.Namespace) -> int:
         return 2
     try:
         client = Client(transport.send, transport.receive, transport=transport)
-        client.connect()
+        try:
+            client.connect()
+        except (SessionError, HandshakeError) as exc:
+            emit(str(exc))
+            return 1
         return _run_commands(client, args.command, args.repl)
     finally:
         device.close()

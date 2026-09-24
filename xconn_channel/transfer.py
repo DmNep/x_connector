@@ -97,6 +97,68 @@ def decode_close(payload: bytes) -> int:
     return digest
 
 
+def encode_get(name: str) -> bytes:
+    """FILE_GET: путь UTF-8, без NUL, не длиннее FILE_GET_NAME_MAX."""
+    if not name or "\x00" in name:
+        raise TransferError(f"непригодное имя {name!r}")
+    raw = name.encode("utf-8")
+    if len(raw) > config.FILE_GET_NAME_MAX:
+        raise TransferError(
+            f"имя {len(raw)} байт, лимит {config.FILE_GET_NAME_MAX}"
+        )
+    return raw
+
+
+def decode_get(payload: bytes) -> str:
+    if not payload or len(payload) > config.FILE_GET_NAME_MAX:
+        raise TransferError(f"FILE_GET длина {len(payload)}")
+    try:
+        name = payload.decode("utf-8")
+    except UnicodeDecodeError as err:
+        raise TransferError("FILE_GET не UTF-8") from err
+    if "\x00" in name:
+        raise TransferError("FILE_GET с NUL")
+    return name
+
+
+def encode_offer(size: int, digest: int) -> bytes:
+    if not 0 <= size <= config.FILE_MAX_BYTES:
+        raise TransferError(f"размер {size} вне 0..{config.FILE_MAX_BYTES}")
+    return struct.pack(">II", size, digest)
+
+
+def decode_offer(payload: bytes) -> tuple[int, int]:
+    if len(payload) != 8:
+        raise TransferError(f"FILE_OFFER длина {len(payload)}, ждут 8")
+    size, digest = struct.unpack(">II", payload)
+    if not 0 <= size <= config.FILE_MAX_BYTES:
+        raise TransferError(f"размер {size} вне 0..{config.FILE_MAX_BYTES}")
+    return size, digest
+
+
+def encode_pull(offset: int) -> bytes:
+    if not 0 <= offset <= config.FILE_MAX_BYTES:
+        raise TransferError(f"смещение {offset} вне диапазона")
+    return struct.pack(">I", offset)
+
+
+def decode_pull(payload: bytes) -> int:
+    if len(payload) != 4:
+        raise TransferError(f"FILE_PULL длина {len(payload)}, ждут 4")
+    (offset,) = struct.unpack(">I", payload)
+    return offset
+
+
+def resolve_get_path(root: str | os.PathLike[str], name: str) -> Path:
+    """Путь для выгрузки: абсолютный без «..» или имя в каталоге-приёмнике."""
+    if ".." in name.replace("\\", "/").split("/"):
+        raise TransferError(f"путь с ..: {name!r}")
+    path = Path(name)
+    if path.is_absolute():
+        return path.resolve()
+    return dest_path(root, name)
+
+
 def dest_path(root: str | os.PathLike[str], name: str) -> Path:
     """Конечный путь в root. sanitize_name уже отсёк обход каталога."""
     clean = sanitize_name(name)

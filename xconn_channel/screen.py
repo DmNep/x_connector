@@ -181,22 +181,63 @@ def serialize_full(screen: Screen) -> bytes:
 
     Бросает ValueError, если после сжатия не влезает в MAX_PAYLOAD:
     типичный экран сжимается в 5-10 раз (1920 -> 150-400 байт), но экран
-    из несжимаемого мусора в лимит не попадает. Сегментации снимка в
-    протоколе нет — разбирать такой случай обязан уровень выше.
+    из несжимаемого мусора режется на SCREEN_PART (docs/protocol.md 6.4).
     """
-    header = bytes(
-        (screen.rows, screen.cols, screen.cur_row, screen.cur_col, screen.flags)
-    )
-    body = bytes(screen.cells)
-    if any(screen.inverse):
-        body += bytes(screen.inverse)
-    packed = zlib.compress(header + body, _ZLIB_LEVEL)
+    packed = pack_full(screen)
     if len(packed) > config.MAX_PAYLOAD:
         raise ValueError(
             f"снимок после zlib {len(packed)} байт превышает MAX_PAYLOAD="
             f"{config.MAX_PAYLOAD}: экран несжимаем, нужна сегментация"
         )
     return packed
+
+
+def pack_full(screen: Screen) -> bytes:
+    """zlib снимка без проверки MAX_PAYLOAD — для нарезки на SCREEN_PART."""
+    header = bytes(
+        (screen.rows, screen.cols, screen.cur_row, screen.cur_col, screen.flags)
+    )
+    body = bytes(screen.cells)
+    if any(screen.inverse):
+        body += bytes(screen.inverse)
+    return zlib.compress(header + body, _ZLIB_LEVEL)
+
+
+def split_packed(blob: bytes, size: int | None = None) -> list[bytes]:
+    """Нарезать zlib-снимок на куски SCREEN_CHUNK."""
+    chunk = config.SCREEN_CHUNK if size is None else size
+    if chunk < 1:
+        raise ValueError(f"кусок {chunk} байт")
+    if not blob:
+        return [b""]
+    return [blob[i : i + chunk] for i in range(0, len(blob), chunk)]
+
+
+def encode_part(kind: int, index: int, total: int, data: bytes) -> bytes:
+    """SCREEN_PART: kind, index, total, кусок."""
+    if not 0 <= kind <= 1:
+        raise ValueError(f"kind {kind}")
+    if not 0 <= index < total <= 255:
+        raise ValueError(f"часть {index}/{total}")
+    if len(data) > config.SCREEN_CHUNK:
+        raise ValueError(
+            f"кусок {len(data)} байт, лимит {config.SCREEN_CHUNK}"
+        )
+    return bytes((kind, index, total)) + data
+
+
+def decode_part(payload: bytes) -> tuple[int, int, int, bytes]:
+    """Разбор SCREEN_PART. ScreenError, если заголовок короче трёх байт."""
+    if len(payload) < config.SCREEN_PART_HDR:
+        raise ScreenError(
+            f"SCREEN_PART усечён: {len(payload)} байт", config.NAK_LENGTH
+        )
+    kind, index, total = payload[:3]
+    if total < 1 or index >= total:
+        raise ScreenError(
+            f"SCREEN_PART {index}/{total}", config.NAK_LENGTH
+        )
+    return kind, index, total, payload[3:]
 
 
 def parse_full(payload: bytes) -> Screen:

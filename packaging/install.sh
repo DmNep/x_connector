@@ -6,8 +6,28 @@ set -eu
 PREFIX="${PREFIX:-/opt/x_connector}"
 ENV_CAPTURE="${XCONN_CAPTURE:-}"
 ENV_PLAYBACK="${XCONN_PLAYBACK:-}"
-CAPTURE="hw:0,0"
-PLAYBACK="hw:0,0"
+detect_analog_pcm() {
+    if [ ! -r /proc/asound/pcm ]; then
+        echo "plughw:0,0"
+        return
+    fi
+    line=$(grep -i analog /proc/asound/pcm | head -n 1 || true)
+    if [ -z "$line" ]; then
+        echo "plughw:0,0"
+        return
+    fi
+    card=${line%%-*}
+    rest=${line#*-}
+    dev=${rest%%:*}
+    card=$(echo "$card" | sed 's/^0*//')
+    dev=$(echo "$dev" | sed 's/^0*//')
+    [ -z "$card" ] && card=0
+    [ -z "$dev" ] && dev=0
+    echo "plughw:${card},${dev}"
+}
+
+CAPTURE=$(detect_analog_pcm)
+PLAYBACK="$CAPTURE"
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "нужен root: sudo sh $0" >&2

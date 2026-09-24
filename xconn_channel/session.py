@@ -37,10 +37,13 @@ from .screen import ScreenError
 class SessionError(Exception):
     """Обмен не удался после MAX_RETRY ретраев. Счётчики сохранены."""
 
-    def __init__(self, message: str, attempts: int, seq: int) -> None:
+    def __init__(
+        self, message: str, attempts: int, seq: int, nak: int | None = None
+    ) -> None:
         super().__init__(message)
         self.attempts = attempts
         self.seq = seq
+        self.nak = nak
 
 
 class _Clock:
