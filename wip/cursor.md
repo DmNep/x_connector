@@ -1,14 +1,15 @@
 ---
 status: active
 worktree: D:/projects/x_connector
-branch: wip/cursor-safe-connect
-task: слив wip/cursor-safe-connect в master после правок AGENTS §4
+branch: wip/cursor-v1
+task: коммит 1.0.0, пуш, запись флешки
 hands_off:
- - AGENTS.md
  - README.md
  - docs/manual.md
+ - AGENTS.md
+ - xconn_channel/__init__.py
  - wip/cursor.md
-updated: 2026-09-25T23:35+03:00
+updated: 2026-09-26T00:22+03:00
 ---
 
-Документация первой сборки обновлена. Дальше — слив в master (ветка свободна, Claude idle).
+Коммит релиза 1.0.0 и запись установочной флешки. Claude idle.
