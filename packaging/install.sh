@@ -185,9 +185,10 @@ fi
 
 # Аварийная консоль чинит сеть: пароль в PTY завис бы на пол-обмена.
 # Физический доступ к кабелю = тот же человек, что у машины (AGENTS.md 3.6).
+# !requiretty не писать: sudo 1.9.17+ (Ubuntu 26.04) его больше не знает,
+# visudo -cf валит весь install.sh.
 sudoers=/etc/sudoers.d/xconn-agent
 cat > "$sudoers" <<'EOF'
-Defaults:xconn !requiretty
 xconn ALL=(root) NOPASSWD:ALL
 EOF
 chmod 440 "$sudoers"
