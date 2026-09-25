@@ -191,14 +191,28 @@ def frequency_response(captures: list[tuple[int, array.array]]) -> list[dict]:
 
 
 def tone_imbalance(samples_1200, samples_2200) -> dict:
-    """Завал 2200 относительно 1200. Больше 6 дБ — смещать TONES вниз (12)."""
+    """Завал 2200 относительно 1200. Больше 6 дБ — смещать TONES вниз (12).
+
+    Мёртвый опорный тон 1200 Гц (p1200<=0) — не "пара пригодна": db_ratio
+    для den<=0 отдаёт +inf независимо от num, и shift_tones_down тихо
+    становится False, хотя сравнивать не с чем — 1200 Гц сломан сам по
+    себе. Такой случай — отдельный флаг, а не число в дБ.
+    """
     p1200 = goertzel_power(samples_1200, 1200)
     p2200 = goertzel_power(samples_2200, 2200)
+    if p1200 <= 0.0:
+        return {
+            "db_2200_vs_1200": float("-inf"),
+            "limit_db": IMBALANCE_LIMIT_DB,
+            "shift_tones_down": False,
+            "reference_dead": True,
+        }
     delta = db_ratio(p2200, p1200)
     return {
         "db_2200_vs_1200": delta,
         "limit_db": IMBALANCE_LIMIT_DB,
         "shift_tones_down": delta < -IMBALANCE_LIMIT_DB,
+        "reference_dead": False,
     }
 
 
@@ -277,16 +291,24 @@ def format_report(
         lines.append("")
     if imbalance is not None:
         lines.append("## Тона Bell 202")
-        lines.append(
-            f"- 2200 Гц к 1200 Гц: {_fmt_db(imbalance['db_2200_vs_1200'])} дБ "
-            f"(лимит -{imbalance['limit_db']:.0f} дБ)"
-        )
-        if imbalance["shift_tones_down"]:
+        if imbalance.get("reference_dead"):
             lines.append(
-                "- 2200 Гц завален: сместить TONES вниз и зафиксировать в отчёте"
+                "- опорный тон 1200 Гц не принят (мощность 0) — сравнение невозможно"
+            )
+            lines.append(
+                "- проверьте тракт на 1200 Гц отдельно, TONES по этому отчёту не менять"
             )
         else:
-            lines.append("- пара 1200/2200 Гц пригодна")
+            lines.append(
+                f"- 2200 Гц к 1200 Гц: {_fmt_db(imbalance['db_2200_vs_1200'])} дБ "
+                f"(лимит -{imbalance['limit_db']:.0f} дБ)"
+            )
+            if imbalance["shift_tones_down"]:
+                lines.append(
+                    "- 2200 Гц завален: сместить TONES вниз и зафиксировать в отчёте"
+                )
+            else:
+                lines.append("- пара 1200/2200 Гц пригодна")
         lines.append("")
     return "\n".join(lines)
 
