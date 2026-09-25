@@ -117,7 +117,7 @@ cd /mnt/usb
 sudo sh install.sh
 ```
 
-Скрипт копирует пакет в `/opt/x_connector`, распаковывает встроенный python3 в `/opt/x_connector/python`, при отсутствии `aplay` ставит `alsa-utils` из `alsa-debs/$VERSION_CODENAME` (`dpkg -i`, без apt), заводит пользователя `xconn` в группе `audio`, ставит `xconn-agent.service`. Повторный `install.sh` не сбрасывает уже прописанные `XCONN_CAPTURE` / `XCONN_PLAYBACK`.
+Скрипт копирует пакет в `/opt/x_connector`, распаковывает встроенный python3 в `/opt/x_connector/python`, при отсутствии `aplay` ставит `alsa-utils` из `alsa-debs/$VERSION_CODENAME` (`dpkg -i`, без apt), заводит пользователя `xconn` в группе `audio`, даёт ему `NOPASSWD` sudo (`/etc/sudoers.d/xconn-agent`) и ставит `xconn-agent.service`. Повторный `install.sh` не сбрасывает уже прописанные `XCONN_CAPTURE` / `XCONN_PLAYBACK`.
 
 Устройства:
 

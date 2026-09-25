@@ -51,7 +51,12 @@ def _print_screen(client: Client) -> None:
 
 def _run_commands(client: Client, commands: list[str], repl: bool) -> int:
     for command in commands:
-        client.cmd(command)
+        try:
+            client.cmd(command)
+        except SessionError as exc:
+            emit(str(exc))
+            _print_screen(client)
+            return 1
         _print_screen(client)
     if repl:
         try:

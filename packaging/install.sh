@@ -183,6 +183,22 @@ else
     chown -R xconn "$PREFIX"
 fi
 
+# Аварийная консоль чинит сеть: пароль в PTY завис бы на пол-обмена.
+# Физический доступ к кабелю = тот же человек, что у машины (AGENTS.md 3.6).
+sudoers=/etc/sudoers.d/xconn-agent
+cat > "$sudoers" <<'EOF'
+Defaults:xconn !requiretty
+xconn ALL=(root) NOPASSWD:ALL
+EOF
+chmod 440 "$sudoers"
+if command -v visudo >/dev/null 2>&1; then
+    if ! visudo -cf "$sudoers"; then
+        rm -f "$sudoers"
+        echo "sudoers для xconn не принят, visudo -cf не прошёл" >&2
+        exit 1
+    fi
+fi
+
 cat > /etc/default/xconn-agent <<EOF
 XCONN_PREFIX="$PREFIX"
 XCONN_CAPTURE="$CAPTURE"

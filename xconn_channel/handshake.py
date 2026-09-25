@@ -135,8 +135,8 @@ def client_handshake(
         raise HandshakeError(str(error)) from None
 
     try:
-        return _helo_once(master, desired_mode, transport)
-    except SessionError as probe_err:
+        return _helo_retry(master, desired_mode, transport)
+    except (SessionError, HandshakeError) as probe_err:
         # Агент после удачного сеанса остаётся в base и не слышит probe.
         # Новый клиент иначе молчит до restart (железо 2026-09-22).
         if transport is None:
@@ -144,11 +144,28 @@ def client_handshake(
         transport.set_mode(config.BASE)
         master.mode = config.BASE
         try:
-            return _helo_once(master, desired_mode, transport)
-        except SessionError as base_err:
+            return _helo_retry(master, desired_mode, transport)
+        except (SessionError, HandshakeError) as base_err:
             raise HandshakeError(
                 f"нет ответа в probe и в base: {base_err}"
             ) from base_err
+
+
+def _helo_retry(master: MasterSession, desired_mode: str, transport) -> Helo:
+    """Несколько HELO: seq=0 часто попадает в кэш агента (NAK/SCREEN_PART).
+
+    exchange уже сдвинул seq в _finish, повтор идёт следующим номером.
+    """
+    last: Exception | None = None
+    for _ in range(4):
+        try:
+            return _helo_once(master, desired_mode, transport)
+        except HandshakeError as err:
+            if "ожидался HELO" not in str(err):
+                raise
+            last = err
+    assert last is not None
+    raise last
 
 
 def _helo_once(master: MasterSession, desired_mode: str, transport) -> Helo:

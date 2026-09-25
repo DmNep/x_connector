@@ -64,12 +64,10 @@ class Client:
         self.helo = handshake.client_handshake(self.master, desired_mode, self.transport)
         try:
             self.refresh()
-        except SessionError as err:
-            if err.nak == config.NAK_LENGTH:
-                # Старый агент без нарезки: 24×80 после motd не влезает.
-                self.resize(config.SAFE_ROWS, config.SAFE_COLS)
-            else:
-                raise
+        except SessionError:
+            # NAK_LENGTH — старый агент без нарезки. CRC/таймаут —
+            # 24×80 после motd тоже не проходит живой канал.
+            self.resize(config.SAFE_ROWS, config.SAFE_COLS)
         return self.helo
 
     def _nak_error(self, reply: Frame) -> SessionError:

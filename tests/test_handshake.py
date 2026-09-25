@@ -103,6 +103,39 @@ class TestHandshakeLogic(unittest.TestCase):
         self.assertEqual(agent_helo.mode, config.BASE)
         self.assertEqual((agent_helo.rows, agent_helo.cols), (24, 80))
 
+    def test_helo_retries_after_cached_nak(self) -> None:
+        """seq=0 отдаёт кэш NAK — следующий seq получает живой HELO."""
+        import collections
+
+        to_agent: collections.deque = collections.deque()
+        to_master: collections.deque = collections.deque()
+        inner = handshake.agent_helo_handler()
+
+        def handler(frame: Frame):
+            if frame.seq == 0:
+                return config.NAK, bytes((0, config.NAK_STATE))
+            return inner(frame)
+
+        def master_receive(timeout=0.0):
+            while agent.poll(0):
+                pass
+            return to_master.popleft() if to_master else None
+
+        agent = AgentSession(
+            lambda d: to_master.append(d),
+            lambda t=0.0: to_agent.popleft() if to_agent else None,
+            handler,
+        )
+        master = MasterSession(
+            lambda d: to_agent.append(d),
+            master_receive,
+            mode=config.PROBE,
+            clock=FakeClock(),
+        )
+        agent_helo = handshake.client_handshake(master, config.BASE)
+        self.assertEqual(agent_helo.mode, config.BASE)
+        self.assertGreaterEqual(master.seq, 2)
+
     def test_handshake_sets_master_mode_without_caller_help(self) -> None:
         """client_handshake сама переводит master.mode (docs/protocol.md 8.5).
 

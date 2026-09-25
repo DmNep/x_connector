@@ -320,6 +320,16 @@ class AgentSession:
             # ACK мастера — не запрос, ответа не требует (8.2).
             return None
 
+        if request.type == config.HELO:
+            # Новый клиент всегда начинает с seq=0. Старый last_seq=0 иначе
+            # отдаёт кэш (SCREEN_PART) вместо рукопожатия — эфир «жив»,
+            # а connect видит не-HELO.
+            reply_type, reply_payload = self._handler(request)
+            reply = framing.build_frame(reply_type, request.seq, reply_payload)
+            self._last_seq = request.seq
+            self._cached = reply
+            return reply
+
         if request.type == config.NAK:
             # NAK мастера — запрос повтора RESP, не новый REQ (8.2).
             # Исполнение не повторяется: отдаём кэш, а если задан

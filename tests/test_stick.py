@@ -58,6 +58,9 @@ class TestWriteStick(unittest.TestCase):
         self.assertIn("python/bin/python3", text)
         self.assertIn("alsa-debs", text)
         self.assertIn("aplay", text)
+        self.assertIn("/etc/sudoers.d/xconn-agent", text)
+        self.assertIn("NOPASSWD:ALL", text)
+        self.assertIn("visudo -cf", text)
 
     def test_run_agent_prefers_bundled_python(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
