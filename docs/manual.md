@@ -201,10 +201,11 @@ py -m xconn_channel devices
 
 ```text
 cd x_connector
-py -m xconn_channel client --repl
-py -m xconn_channel client --capture 1 --playback 0 --repl
-py -m xconn_channel client -c "ip a" -c "ip r"
+py -m xconn_channel client --capture 0 --playback 1 --repl
+py -m xconn_channel client --capture 0 --playback 1 -c "ip a" -c "ip r"
 ```
+
+На этом ноутбуке карта **0** — микрофон; **1** — аналоговый выход. `--playback 0` уходит в HDMI и оставляет эфир тихим.
 
 После `connect` печатается сетка 24×80 (снимок при необходимости едет кусками). Дальше — как в loopback: команды, `.key`, `.ping`, `.refresh`, `.resize`, `.get`.
 
@@ -217,6 +218,10 @@ py -m xconn_channel client -c "ip a" -c "ip r"
 - Без пакета `alsa-utils` агент падает: `No such file or directory: 'aplay'`. Пакеты лежат на флешке, не через apt.
 - Несжимаемый 24×80 режется на `SCREEN_PART`. Старый агент без нарезки по-прежнему даёт `nak=0x03` — клиент тогда жмёт окно до 8×32.
 - Повторный HELO: клиент пробует `probe`, затем `base`. Агент после сеанса слушает 1200 бод — без этого шага эфир молчит до restart.
+- После записи флешки нужен `systemctl restart xconn-agent`, не только `start`: иначе процесс держит старый `vt100.py` в памяти.
+- Ubuntu 26.04: в sudoers **не** писать `Defaults:xconn !requiretty` — visudo 1.9.17+ отвергает неизвестную настройку и откатывает весь файл.
+- VT100 глотает OSC (`ESC ] … BEL`/`ST`): semantic prompt systemd больше не протекает в сетку как `3008;start=`.
+- Помпа ждёт, пока в PTY есть foreground (`TIOCGPGRP`); клиент на CMD/KEY держит `T_CMD_CARRIER` и режет ввод длиннее 240 байт. Приёмка 3.3 (работа без консоли сервера) пройдена 2026-09-25.
 
 ### 6.3 Что происходит при рукопожатии
 
@@ -368,21 +373,26 @@ nft list ruleset
 | HDMI в `hw:0,0`, аналог на другой карте | смотреть `/proc/asound/pcm`: ALC/Analog, не HDMI; типично `hw:1,0` |
 | `nak=0x03` на `.refresh` / команде | старый агент без нарезки; обновить с флешки или `.resize 8 32` |
 | После NAK агент не отвечает на HELO | клиент 0.4 сам повторит HELO в `base`; иначе `systemctl restart xconn-agent` |
+| visudo: unknown setting `requiretty` | Ubuntu 26.04; в sudoers только `xconn ALL=(root) NOPASSWD:ALL`, без `!requiretty` |
+| В сетке `3008;start=` | старый агент без глотания OSC; `systemctl restart xconn-agent` после записи флешки |
+| Снимок посреди `ping` / `netplan apply` | нужен агент с помпой по `TIOCGPGRP` и клиент с `T_CMD_CARRIER` |
 
 Логи агента в этой версии идут в stderr процесса. Отдельного syslog-юнита в репозитории нет.
 
 ## 13. Чего в этой версии нет
 
+Первая сборка (канал, флешка, приёмка 3.3, доверенная консоль) закрыта. Дальше — отдельные фазы:
+
 - Приёмки BER на этом конкретном кабеле (команда `py tools/ber.py --live` есть).
 - Открытия `/dev/snd` без `aplay`/`arecord` (есть стерео и `plughw:`).
-- HID-клавиатуры (микроконтроллер) — не входит в первую сборку.
+- HID-клавиатуры (микроконтроллер) и слепого подъёма — не входят в первую сборку.
 - Шифрования, полного дуплекса, SSH/IP поверх звука — это не «ещё не сделано», а сознательный отказ.
 
 ## 14. Для ИИ-агента на ноутбуке
 
 Клиент — инструмент, не автономный бот. Минимальный сценарий починки сети:
 
-1. `py -m xconn_channel client --repl` либо серия `-c`.
+1. `py -m xconn_channel client --capture 0 --playback 1 --repl` либо серия `-c`.
 2. Дождаться сетки после `connect`.
 3. Снять картину: `ip a`, `ip r`, `ss -tunap`, `journalctl -b`.
 4. Править конфиги через ту же консоль.

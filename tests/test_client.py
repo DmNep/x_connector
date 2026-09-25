@@ -66,6 +66,17 @@ class TestClientOverBytes(unittest.TestCase):
         client.cmd("pwd")
         self.assertIn(b"pwd\n", pty.written)
 
+    def test_cmd_splits_over_max_payload(self) -> None:
+        """Строка длиннее кадра уходит кусками, \\n только в конце."""
+        client, host, pty = self._pair()
+        for _ in range(4):
+            pty.replies.append(b"$ ")
+        client.connect()
+        long = "x" * (config.MAX_PAYLOAD + 30)
+        client.cmd(long)
+        self.assertIn((long + "\n").encode(), bytes(pty.written))
+        self.assertGreaterEqual(host.core.stats["cmds"], 2)
+
     def test_key_ctrl_c(self) -> None:
         client, _, pty = self._pair()
         client.connect()

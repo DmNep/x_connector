@@ -171,6 +171,21 @@ class PtyShell:
         pid, _status = os.waitpid(self.pid, os.WNOHANG)
         return pid != 0
 
+    def foreground_busy(self) -> bool:
+        """True, пока в PTY не bash, а команда (TIOCGPGRP ≠ pid оболочки)."""
+        import fcntl
+        import struct
+        import termios
+
+        if self.fd < 0 or self.pid <= 0:
+            return False
+        try:
+            packed = fcntl.ioctl(self.fd, termios.TIOCGPGRP, struct.pack("i", 0))
+        except OSError:
+            return False
+        fg = struct.unpack("i", packed)[0]
+        return fg > 0 and fg != self.pid
+
     def restart(self) -> None:
         if self.fd >= 0:
             try:

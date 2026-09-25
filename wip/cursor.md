@@ -1,13 +1,14 @@
 ---
-status: idle
+status: active
 worktree: D:/projects/x_connector
 branch: wip/cursor-safe-connect
-task: ""
-hands_off: []
-updated: 2026-09-25T04:38+03:00
+task: слив wip/cursor-safe-connect в master после правок AGENTS §4
+hands_off:
+ - AGENTS.md
+ - README.md
+ - docs/manual.md
+ - wip/cursor.md
+updated: 2026-09-25T23:35+03:00
 ---
 
-Свободен. Закоммичены: HELO без кэша seq=0, повтор HELO на клиенте,
-SAFE resize при CRC, sudoers в install.sh, SessionError на -c.
-На железе: sudo у xconn есть, 02-wifi.yaml записан, apply упал на старом
-адаптере, после apply экран не приходит — нужен restart агента.
+Документация первой сборки обновлена. Дальше — слив в master (ветка свободна, Claude idle).

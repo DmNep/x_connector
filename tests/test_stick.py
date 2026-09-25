@@ -61,6 +61,8 @@ class TestWriteStick(unittest.TestCase):
         self.assertIn("/etc/sudoers.d/xconn-agent", text)
         self.assertIn("NOPASSWD:ALL", text)
         self.assertIn("visudo -cf", text)
+        # sudo 1.9.17+ (Ubuntu 26.04): unknown setting, visudo валит install.
+        self.assertNotIn("Defaults:xconn !requiretty", text)
 
     def test_run_agent_prefers_bundled_python(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

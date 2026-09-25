@@ -85,6 +85,27 @@ class TestAgentCore(unittest.TestCase):
         self.assertEqual(payload[0], 0, "base_seq")
         self.assertEqual(payload[1], 0, "ноль изменённых строк")
 
+    def test_pump_waits_while_busy(self) -> None:
+        """Пока is_busy(), снимок не снимается — ping не обрезается."""
+        pty = FakePty([b"PING\r\n"])
+        checks = {"n": 0}
+
+        def busy() -> bool:
+            checks["n"] += 1
+            return checks["n"] < 4
+
+        core = AgentCore(
+            pty.write,
+            pty.read,
+            pump_wait_ms=0,
+            pump_idle_ms=0,
+            pump_busy_ms=500,
+            is_busy=busy,
+        )
+        core.handle(frame(config.CMD, 0, b"ping\n"))
+        self.assertGreaterEqual(checks["n"], 3)
+        self.assertIn(b"PING", core.screen.cells)
+
     def test_replay_returns_full_not_reexecutes(self) -> None:
         """Повтор REQ: команда не пишется в PTY повторно, ответ — FULL (8.2)."""
         pty = FakePty([b"$ ", b"out\r\n$ ", b"SHOULD NOT PRINT"])

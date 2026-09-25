@@ -80,7 +80,12 @@ class Client:
         )
 
     def _exchange_screen(self, frame_type: int, payload: bytes = b"") -> Screen:
-        reply = self.master.exchange(frame_type, payload, accept=self._apply)
+        timeout = None
+        if frame_type in (config.CMD, config.KEY, config.SCREEN_MORE):
+            timeout = config.T_CMD_CARRIER_MS
+        reply = self.master.exchange(
+            frame_type, payload, accept=self._apply, timeout_ms=timeout
+        )
         if reply.type == config.NAK:
             raise self._nak_error(reply)
         while (
@@ -96,11 +101,23 @@ class Client:
         return self.screen
 
     def cmd(self, text: str) -> Screen:
-        """Строка ввода. Добавляет \\n, если его нет: удобство CLI и ИИ."""
+        """Строка ввода. Добавляет \\n, если его нет: удобство CLI и ИИ.
+
+        Кадр не длиннее MAX_PAYLOAD: длинную строку режем, перевод строки
+        только в последнем куске — bash не исполняет набор по частям.
+        """
         data = text.encode("utf-8")
         if not data.endswith((b"\n", b"\r")):
             data += b"\n"
-        return self._exchange_screen(config.CMD, data)
+        limit = config.MAX_PAYLOAD
+        screen = None
+        offset = 0
+        while offset < len(data):
+            chunk = data[offset : offset + limit]
+            offset += len(chunk)
+            screen = self._exchange_screen(config.CMD, chunk)
+        assert screen is not None
+        return screen
 
     def type_bytes(self, data: bytes) -> Screen:
         """Сырые байты без добавления перевода строки."""
