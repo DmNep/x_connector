@@ -59,6 +59,7 @@ class AgentHost:
     def handle(self, frame: Frame) -> tuple[int, bytes]:
         """Handler сессии: HELO в любой момент, иначе ядро."""
         if frame.type == config.HELO:
+            self.core.reset_session()
             result = self._helo(frame)
             if result[0] == config.HELO:
                 agent = handshake.decode_helo(result[1])

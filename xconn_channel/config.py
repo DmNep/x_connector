@@ -138,12 +138,17 @@ PING_FULL = 0x01
 CMD = 0x10
 KEY = 0x11
 RESIZE = 0x12
+SCREEN_MORE = 0x13
 SCREEN_FULL = 0x20
 SCREEN_DELTA = 0x21
 NOTE = 0x22
+SCREEN_PART = 0x23
 FILE_OPEN = 0x30
 FILE_DATA = 0x31
 FILE_CLOSE = 0x32
+FILE_GET = 0x33
+FILE_OFFER = 0x34
+FILE_PULL = 0x35
 
 # Имя в FILE_OPEN — 64 байта UTF-8 с NUL-дополнением (docs/protocol.md 7).
 FILE_NAME_BYTES = 64
@@ -151,8 +156,15 @@ FILE_NAME_BYTES = 64
 FILE_DATA_HDR = 6
 FILE_CHUNK = MAX_PAYLOAD - FILE_DATA_HDR
 FILE_MAX_BYTES = 256 * 1024
+FILE_GET_NAME_MAX = 200
 # NOTE: успешный FILE_* (один байт).
 NOTE_OK = 0x00
+
+# Нарезка снимка: kind:1 index:1 total:1 + кусок zlib.
+SCREEN_PART_HDR = 3
+SCREEN_CHUNK = MAX_PAYLOAD - SCREEN_PART_HDR
+SCREEN_PART_FULL = 0
+SCREEN_PART_DELTA = 1
 
 FRAME_TYPES: dict[int, str] = {
     ACK: "ACK",
@@ -163,12 +175,17 @@ FRAME_TYPES: dict[int, str] = {
     CMD: "CMD",
     KEY: "KEY",
     RESIZE: "RESIZE",
+    SCREEN_MORE: "SCREEN_MORE",
     SCREEN_FULL: "SCREEN_FULL",
     SCREEN_DELTA: "SCREEN_DELTA",
     NOTE: "NOTE",
+    SCREEN_PART: "SCREEN_PART",
     FILE_OPEN: "FILE_OPEN",
     FILE_DATA: "FILE_DATA",
     FILE_CLOSE: "FILE_CLOSE",
+    FILE_GET: "FILE_GET",
+    FILE_OFFER: "FILE_OFFER",
+    FILE_PULL: "FILE_PULL",
 }
 
 # Причины NAK.
@@ -183,6 +200,12 @@ PROTO_VERSION = 1
 
 DEFAULT_ROWS = 24
 DEFAULT_COLS = 80
+
+# Живой ALC897: полный 24×80 после motd не влезает в MAX_PAYLOAD (nak=0x03),
+# после такого NAK агент часто перестаёт отвечать на HELO. Клиент жмёт
+# окно до этих размеров сразу после рукопожатия, до первого снимка.
+SAFE_ROWS = 8
+SAFE_COLS = 32
 
 # Кодовая страница экрана. cp437 даёт псевграфику консольных программ
 # (dialog, установщики, box drawing) одним байтом на символ.

@@ -6,8 +6,28 @@ set -eu
 PREFIX="${PREFIX:-/opt/x_connector}"
 ENV_CAPTURE="${XCONN_CAPTURE:-}"
 ENV_PLAYBACK="${XCONN_PLAYBACK:-}"
-CAPTURE="hw:0,0"
-PLAYBACK="hw:0,0"
+detect_analog_pcm() {
+    if [ ! -r /proc/asound/pcm ]; then
+        echo "plughw:0,0"
+        return
+    fi
+    line=$(grep -i analog /proc/asound/pcm | head -n 1 || true)
+    if [ -z "$line" ]; then
+        echo "plughw:0,0"
+        return
+    fi
+    card=${line%%-*}
+    rest=${line#*-}
+    dev=${rest%%:*}
+    card=$(echo "$card" | sed 's/^0*//')
+    dev=$(echo "$dev" | sed 's/^0*//')
+    [ -z "$card" ] && card=0
+    [ -z "$dev" ] && dev=0
+    echo "plughw:${card},${dev}"
+}
+
+CAPTURE=$(detect_analog_pcm)
+PLAYBACK="$CAPTURE"
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "нужен root: sudo sh $0" >&2
@@ -161,6 +181,22 @@ if getent group audio >/dev/null 2>&1; then
     chown -R xconn:audio "$PREFIX"
 else
     chown -R xconn "$PREFIX"
+fi
+
+# Аварийная консоль чинит сеть: пароль в PTY завис бы на пол-обмена.
+# Физический доступ к кабелю = тот же человек, что у машины (AGENTS.md 3.6).
+sudoers=/etc/sudoers.d/xconn-agent
+cat > "$sudoers" <<'EOF'
+Defaults:xconn !requiretty
+xconn ALL=(root) NOPASSWD:ALL
+EOF
+chmod 440 "$sudoers"
+if command -v visudo >/dev/null 2>&1; then
+    if ! visudo -cf "$sudoers"; then
+        rm -f "$sudoers"
+        echo "sudoers для xconn не принят, visudo -cf не прошёл" >&2
+        exit 1
+    fi
 fi
 
 cat > /etc/default/xconn-agent <<EOF

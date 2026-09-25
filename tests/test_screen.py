@@ -232,6 +232,26 @@ class TestSerializeDelta(unittest.TestCase):
         self.assertEqual(ctx.exception.code, config.NAK_LENGTH)
 
 
+class TestScreenParts(unittest.TestCase):
+    def test_split_and_join_roundtrip(self) -> None:
+        s = Screen(24, 80)
+        rng = random.Random(1)
+        s.cells[:] = bytes(rng.randrange(256) for _ in range(24 * 80))
+        blob = screen.pack_full(s)
+        self.assertGreater(len(blob), config.MAX_PAYLOAD)
+        parts = screen.split_packed(blob)
+        self.assertGreater(len(parts), 1)
+        for piece in parts:
+            self.assertLessEqual(len(piece), config.SCREEN_CHUNK)
+        restored = screen.parse_full(b"".join(parts))
+        self.assertEqual(restored.cells, s.cells)
+
+    def test_encode_decode_part_header(self) -> None:
+        raw = screen.encode_part(config.SCREEN_PART_FULL, 1, 3, b"abc")
+        kind, index, total, data = screen.decode_part(raw)
+        self.assertEqual((kind, index, total, data), (0, 1, 3, b"abc"))
+
+
 class TestSizes(unittest.TestCase):
     """Размеры из docs/protocol.md 4 и 6.2: снимок и строка в лимит кадра."""
 

@@ -2,7 +2,7 @@
 
 Как собрать тракт, запустить канал и понять, что сломалось. Спецификация кадров и тонов — в [protocol.md](protocol.md). Решения «зачем так» — в [AGENTS.md](../AGENTS.md).
 
-Версия пакета: `xconn_channel` 0.3.0.
+Версия пакета: `xconn_channel` 0.4.0.
 
 ## 1. Что это за система
 
@@ -117,7 +117,7 @@ cd /mnt/usb
 sudo sh install.sh
 ```
 
-Скрипт копирует пакет в `/opt/x_connector`, распаковывает встроенный python3 в `/opt/x_connector/python`, при отсутствии `aplay` ставит `alsa-utils` из `alsa-debs/$VERSION_CODENAME` (`dpkg -i`, без apt), заводит пользователя `xconn` в группе `audio`, ставит `xconn-agent.service`. Повторный `install.sh` не сбрасывает уже прописанные `XCONN_CAPTURE` / `XCONN_PLAYBACK`.
+Скрипт копирует пакет в `/opt/x_connector`, распаковывает встроенный python3 в `/opt/x_connector/python`, при отсутствии `aplay` ставит `alsa-utils` из `alsa-debs/$VERSION_CODENAME` (`dpkg -i`, без apt), заводит пользователя `xconn` в группе `audio`, даёт ему `NOPASSWD` sudo (`/etc/sudoers.d/xconn-agent`) и ставит `xconn-agent.service`. Повторный `install.sh` не сбрасывает уже прописанные `XCONN_CAPTURE` / `XCONN_PLAYBACK`.
 
 Устройства:
 
@@ -206,7 +206,7 @@ py -m xconn_channel client --capture 1 --playback 0 --repl
 py -m xconn_channel client -c "ip a" -c "ip r"
 ```
 
-После `connect` печатается текущая сетка. Дальше — как в loopback: команды, `.key`, `.ping`, `.refresh`, `.resize`.
+После `connect` печатается сетка 24×80 (снимок при необходимости едет кусками). Дальше — как в loopback: команды, `.key`, `.ping`, `.refresh`, `.resize`, `.get`.
 
 ### 6.4 Что показало железо (2026-09-22)
 
@@ -215,8 +215,8 @@ py -m xconn_channel client -c "ip a" -c "ip r"
 - Карта **0** — HDMI монитора. Аналог — карта **1**, устройства `pcmC1D0c` / `pcmC1D0p`.
 - Чистый `hw:1,0` с `-c 1` даёт `Channels count non available`. Рабочий путь: `plughw:1,0`.
 - Без пакета `alsa-utils` агент падает: `No such file or directory: 'aplay'`. Пакеты лежат на флешке, не через apt.
-- `MAX_PAYLOAD` 240 байт: пустой `.ping` проходит, полный 24×80 после motd — `nak=0x03`. Живой обмен: `.resize 12 40` или `8 32`.
-- Повторный HELO после такого NAK часто молчит, пока не `systemctl restart xconn-agent`.
+- Несжимаемый 24×80 режется на `SCREEN_PART`. Старый агент без нарезки по-прежнему даёт `nak=0x03` — клиент тогда жмёт окно до 8×32.
+- Повторный HELO: клиент пробует `probe`, затем `base`. Агент после сеанса слушает 1200 бод — без этого шага эфир молчит до restart.
 
 ### 6.3 Что происходит при рукопожатии
 
@@ -255,6 +255,7 @@ py -m xconn_channel [-V] {loopback|client|agent|stick|devices} [опции]
 | любая строка без точки | `CMD`: строка плюс `\n` в PTY |
 | `.key имя` | клавиша из таблицы ниже |
 | `.put LOCAL [NAME]` | файл на сервер в `inbox/` |
+| `.get REMOTE [LOCAL]` | файл с сервера (абсолютный путь или имя в `inbox/`) |
 | `.ping` | `PING` / `PONG`, экран не перерисовывается |
 | `.refresh` | полный снимок экрана |
 | `.resize R C` | размер сетки PTY (например `.resize 12 40`) |
@@ -282,7 +283,7 @@ py tools/probe.py --selftest
 py tools/probe.py --wav capture.wav
 ```
 
-Живой прогон через winmm/ALSA в этой версии в CLI probe ещё не встроен: сигнал пишется внешним средством в WAV, затем `--wav`.
+Живой прогон: `py tools/probe.py --live --capture 0 --playback 0`. Без `--live` — `--selftest` или `--wav`.
 
 Что смотреть в отчёте:
 
@@ -365,16 +366,15 @@ nft list ruleset
 | `aplay: No such file` / агент код 2 | нет `alsa-utils`; `sudo sh install.sh` с флешки, где есть `alsa-debs/` |
 | `Channels count non available` | `hw:` не умеет моно; в `/etc/default/xconn-agent` поставьте `plughw:N,M` |
 | HDMI в `hw:0,0`, аналог на другой карте | смотреть `/proc/asound/pcm`: ALC/Analog, не HDMI; типично `hw:1,0` |
-| `nak=0x03` на `.refresh` / команде | снимок 24×80 не влез в 240 байт; `.resize 12 40` или `8 32` |
-| После NAK агент не отвечает на HELO | `sudo systemctl restart xconn-agent`, на ноутбуке один клиент |
+| `nak=0x03` на `.refresh` / команде | старый агент без нарезки; обновить с флешки или `.resize 8 32` |
+| После NAK агент не отвечает на HELO | клиент 0.4 сам повторит HELO в `base`; иначе `systemctl restart xconn-agent` |
 
 Логи агента в этой версии идут в stderr процесса. Отдельного syslog-юнита в репозитории нет.
 
 ## 13. Чего в этой версии нет
 
-- Приёмки BER и калибровки `probe --live` на этом тракте.
-- Нарезки снимка экрана: 24×80 после motd не влезает в 240 байт.
-- Открытия ALSA без `aplay` (стерео на чистом `hw:`).
+- Приёмки BER на этом конкретном кабеле (команда `py tools/ber.py --live` есть).
+- Открытия `/dev/snd` без `aplay`/`arecord` (есть стерео и `plughw:`).
 - HID-клавиатуры (микроконтроллер) — не входит в первую сборку.
 - Шифрования, полного дуплекса, SSH/IP поверх звука — это не «ещё не сделано», а сознательный отказ.
 

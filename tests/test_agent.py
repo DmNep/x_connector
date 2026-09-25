@@ -110,8 +110,8 @@ class TestAgentCore(unittest.TestCase):
         self.assertEqual(reply_type, config.SCREEN_FULL)
         self.assertIn(b"out", screen.parse_full(payload).cells)
 
-    def test_replay_of_incompressible_screen_naks_not_crashes(self) -> None:
-        """Replay на несжимаемом экране: NAK, а не необработанный ValueError."""
+    def test_replay_of_incompressible_screen_resends_part(self) -> None:
+        """Replay несжимаемого экрана — та же SCREEN_PART, не ValueError."""
         import random
 
         rng = random.Random(5)
@@ -121,24 +121,14 @@ class TestAgentCore(unittest.TestCase):
         pty = FakePty([b"$ ", big_output + b"\r\n$ "])
         core = AgentCore(pty.write, pty.read)
         core.handle(frame(config.CMD, 0, b"\n"))
-        core.handle(frame(config.CMD, 1, b"big\n"))
+        first_type, first_payload = core.handle(frame(config.CMD, 1, b"big\n"))
+        self.assertEqual(first_type, config.SCREEN_PART)
         reply_type, payload = core.replay()
-        self.assertEqual(reply_type, config.NAK)
-        self.assertEqual(payload[1], config.NAK_LENGTH)
+        self.assertEqual(reply_type, config.SCREEN_PART)
+        self.assertEqual(payload, first_payload)
 
-    def test_oversize_delta_falls_back_to_full(self) -> None:
-        """Дельта не влезает — попытка полного снимка, а он тоже не влезает (6.2).
-
-        При построчном zlib дельта изменённых строк всегда меньше полного
-        снимка того же экрана, поэтому рабочий сценарий «дельта не влезла,
-        FULL влез» структурно недостижим: не влезшая дельта означает
-        несжимаемый экран, на котором не влезет и FULL. Сегментации снимка
-        в протоколе нет (docs/protocol.md 6.1, 7), деградировать дальше
-        некуда — но агент не имеет права падать на этом (AGENTS.md 3.2:
-        обязан работать без присмотра). Уровень выше обязан это видеть —
-        через NAK, а не через упавший процесс: NAK клиент увидит и
-        сможет обработать, крах агента увидеть неоткуда.
-        """
+    def test_oversize_full_is_parted(self) -> None:
+        """Несжимаемый 24×80 режется на SCREEN_PART, агент не падает (6.4)."""
         import random
 
         rng = random.Random(5)
@@ -149,14 +139,15 @@ class TestAgentCore(unittest.TestCase):
         core = AgentCore(pty.write, pty.read)
         core.handle(frame(config.CMD, 0, b"\n"))
         reply_type, payload = core.handle(frame(config.CMD, 1, b"big\n"))
-        self.assertEqual(reply_type, config.NAK)
-        self.assertEqual(payload[1], config.NAK_LENGTH)
+        self.assertEqual(reply_type, config.SCREEN_PART)
+        kind, index, total, _data = screen.decode_part(payload)
+        self.assertEqual((kind, index), (config.SCREEN_PART_FULL, 0))
+        self.assertGreater(total, 1)
 
-        # Агент жив: следующий вызов не роняет процесс исключением. Экран
-        # никто не очищал (реплики FakePty исчерпаны), поэтому он всё ещё
-        # несжимаем и снова законно даёт NAK — здесь важно отсутствие краха.
-        reply_type, _ = core.handle(frame(config.CMD, 2, b"\n"))
-        self.assertIn(reply_type, (config.SCREEN_FULL, config.SCREEN_DELTA, config.NAK))
+        reply_type, payload = core.handle(frame(config.SCREEN_MORE, 2))
+        self.assertEqual(reply_type, config.SCREEN_PART)
+        _kind, index, _total, _data = screen.decode_part(payload)
+        self.assertEqual(index, 1)
 
     def test_resize_resets_base(self) -> None:
         """RESIZE: сетка меняет форму, следующий снимок полный (9, 6.2)."""

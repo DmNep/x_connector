@@ -322,67 +322,156 @@ class WinmmAudio(AudioDevice):
 # --- Linux: ALSA через aplay/arecord ----------------------------------------
 
 
+def as_plughw(device: str) -> str:
+    """hw:N,M → plughw:N,M. ALC897 не открывает моно на чистом hw:."""
+    if device.startswith("hw:"):
+        return "plughw:" + device[3:]
+    return device
+
+
+def _alsa_exited(proc: subprocess.Popen) -> bool:
+    """Реальный aplay.poll() — int или None. Mock в тестах — не int."""
+    return isinstance(proc.poll(), int)
+
+
+def _alsa_play(device: str, channels: int) -> subprocess.Popen:
+    return subprocess.Popen(
+        [
+            "aplay", "-q",
+            "-D", device,
+            "-f", "S16_LE", "-r", str(config.DEVICE_SAMPLE_RATE),
+            "-c", str(channels), "-t", "raw",
+        ],
+        stdin=subprocess.PIPE,
+    )
+
+
+def _alsa_record(device: str, channels: int) -> subprocess.Popen:
+    return subprocess.Popen(
+        [
+            "arecord", "-q",
+            "-D", device,
+            "-f", "S16_LE", "-r", str(config.DEVICE_SAMPLE_RATE),
+            "-c", str(channels), "-t", "raw",
+        ],
+        stdout=subprocess.PIPE,
+    )
+
+
+def _stop_alsa(proc: subprocess.Popen | None) -> None:
+    if proc is None:
+        return
+    try:
+        proc.terminate()
+        proc.wait(timeout=1.0)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
+def downmix_s16(raw: bytes, channels: int) -> bytes:
+    """Интерлив S16 → моно: среднее каналов. channels=1 — как есть."""
+    if channels <= 1:
+        return raw
+    samples = array.array("h")
+    samples.frombytes(raw)
+    out = array.array("h")
+    n = len(samples) - (len(samples) % channels)
+    for i in range(0, n, channels):
+        out.append(int(sum(samples[i : i + channels]) / channels))
+    return out.tobytes()
+
+
+def upmix_s16(mono: bytes, channels: int) -> bytes:
+    """Моно S16 → интерлив: каждый отсчёт повторяется в каналы."""
+    if channels <= 1:
+        return mono
+    samples = array.array("h")
+    samples.frombytes(mono)
+    out = array.array("h")
+    for sample in samples:
+        out.extend([sample] * channels)
+    return out.tobytes()
+
+
 class AlsaAudio(AudioDevice):
-    """Linux: вывод aplay, ввод arecord, устройство hw: напрямую.
+    """Linux: вывод aplay, ввод arecord.
 
-    PipeWire/PulseAudio обходятся: слой микшера вносит АРУ и задержку,
-    которые убивают FSK (docs/protocol.md 2.2). Уровни выставляются
-    amixer, не ползунком микшера (AGENTS.md 3.4).
-
-    device — строка ALSA, например "hw:0,0" или "hw:1,0". Формат
-    S16_LE, 48 кГц, моно — как у тракта (docs/protocol.md 2).
+    PipeWire/PulseAudio обходятся (docs/protocol.md 2.2). Чистый hw:
+    на ALC897 не открывает моно — пробуем стерео и plughw:.
     """
 
     def __init__(self, capture_device: str = "hw:0,0", playback_device: str = "hw:0,0") -> None:
-        self._aplay = subprocess.Popen(
-            [
-                "aplay", "-q",
-                "-D", playback_device,
-                "-f", "S16_LE", "-r", str(config.DEVICE_SAMPLE_RATE),
-                "-c", "1", "-t", "raw",
-            ],
-            stdin=subprocess.PIPE,
+        self._aplay = None
+        self._arecord = None
+        self._channels = 1
+        last_error: Exception | None = None
+        attempts = (
+            (playback_device, capture_device, 1),
+            (playback_device, capture_device, 2),
+            (as_plughw(playback_device), as_plughw(capture_device), 1),
         )
-        try:
-            self._arecord = subprocess.Popen(
-                [
-                    "arecord", "-q",
-                    "-D", capture_device,
-                    "-f", "S16_LE", "-r", str(config.DEVICE_SAMPLE_RATE),
-                    "-c", "1", "-t", "raw",
-                ],
-                stdout=subprocess.PIPE,
-            )
-        except Exception:
-            # aplay уже запущен и держит устройство воспроизведения; раз
-            # arecord не поднялся, объект AlsaAudio не будет создан и
-            # некому будет вызвать close() — глушим aplay сами, иначе
-            # следующий запуск застаёт устройство занятым осиротевшим
-            # процессом (docs/protocol.md 2.2).
-            self._aplay.terminate()
-            self._aplay.wait()
-            raise
+        for play_dev, cap_dev, channels in attempts:
+            aplay = None
+            try:
+                aplay = _alsa_play(play_dev, channels)
+                time.sleep(0.05)
+                if _alsa_exited(aplay):
+                    last_error = OSError(
+                        f"aplay -c {channels} -D {play_dev} сразу вышел"
+                    )
+                    _stop_alsa(aplay)
+                    continue
+                arecord = _alsa_record(cap_dev, channels)
+                time.sleep(0.05)
+                if _alsa_exited(arecord):
+                    last_error = OSError(
+                        f"arecord -c {channels} -D {cap_dev} сразу вышел"
+                    )
+                    _stop_alsa(arecord)
+                    _stop_alsa(aplay)
+                    continue
+            except FileNotFoundError:
+                _stop_alsa(aplay)
+                raise
+            except Exception as err:
+                _stop_alsa(aplay)
+                last_error = err
+                continue
+            self._aplay = aplay
+            self._arecord = arecord
+            self._channels = channels
+            break
+        if self._aplay is None or self._arecord is None:
+            if last_error is not None:
+                raise last_error
+            raise OSError("не удалось открыть aplay/arecord")
         self._pending = bytearray()
-        # Неблокирующий захват: контракт source() — None, если блока ещё нет.
-        # Блокирующий read держал бы T_CARRIER/T_IDLE на длительности read,
-        # а не на таймингах протокола (docs/protocol.md 8.3).
         assert self._arecord.stdout is not None
         os.set_blocking(self._arecord.stdout.fileno(), False)
 
+    def _block_bytes(self) -> int:
+        return BLOCK_BYTES_48K * self._channels
+
     def sink(self, chunk: array.array) -> None:
-        assert self._aplay.stdin is not None
-        self._aplay.stdin.write(upsample(chunk).tobytes())
+        assert self._aplay is not None and self._aplay.stdin is not None
+        mono = upsample(chunk).tobytes()
+        self._aplay.stdin.write(upmix_s16(mono, self._channels))
         self._aplay.stdin.flush()
 
     def source(self) -> array.array | None:
-        assert self._arecord.stdout is not None
+        assert self._arecord is not None and self._arecord.stdout is not None
+        want = self._block_bytes()
         try:
-            incoming = self._arecord.stdout.read(BLOCK_BYTES_48K) or b""
+            incoming = self._arecord.stdout.read(want) or b""
         except BlockingIOError:
             incoming = b""
-        raw = take_pcm_block(self._pending, incoming, BLOCK_BYTES_48K)
+        raw = take_pcm_block(self._pending, incoming, want)
         if raw is None:
             return None
+        raw = downmix_s16(raw, self._channels)
         block = array.array("h")
         block.frombytes(raw)
         return decimate(block) or None

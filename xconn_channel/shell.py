@@ -133,7 +133,18 @@ class PtyShell:
         self.resize(self.rows, self.cols)
 
     def write(self, data: bytes) -> None:
-        os.write(self.fd, data)
+        # O_NONBLOCK: полный буфер не должен заморозить serve/HELO.
+        view = memoryview(data)
+        while view:
+            try:
+                written = os.write(self.fd, view)
+            except BlockingIOError:
+                return
+            except OSError:
+                return
+            if written <= 0:
+                return
+            view = view[written:]
 
     def read(self) -> bytes:
         try:

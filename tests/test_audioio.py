@@ -15,7 +15,13 @@ import unittest
 from unittest import mock
 
 from xconn_channel import config, framing
-from xconn_channel.audioio import AlsaAudio, WavAudio
+from xconn_channel.audioio import (
+    AlsaAudio,
+    WavAudio,
+    as_plughw,
+    downmix_s16,
+    upmix_s16,
+)
 from xconn_channel.demodulator import decimate, demodulate_frame
 from xconn_channel.modulator import Modulator, upsample
 from xconn_channel.transport import AudioTransport
@@ -112,6 +118,20 @@ class TestWavAudio(unittest.TestCase):
     def test_missing_input_is_silence(self) -> None:
         inp = WavAudio(in_path="nonexistent.wav")
         self.assertIsNone(inp.source())
+
+
+class TestAlsaMix(unittest.TestCase):
+    def test_as_plughw(self) -> None:
+        self.assertEqual(as_plughw("hw:1,0"), "plughw:1,0")
+        self.assertEqual(as_plughw("plughw:1,0"), "plughw:1,0")
+
+    def test_upmix_downmix_roundtrip(self) -> None:
+        import struct
+
+        mono = struct.pack("<hh", 100, -100)
+        stereo = upmix_s16(mono, 2)
+        self.assertEqual(len(stereo), 8)
+        self.assertEqual(downmix_s16(stereo, 2), mono)
 
 
 class TestAlsaAudioInitCleanup(unittest.TestCase):

@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import collections
 import time
 import tempfile
 import unittest
@@ -20,8 +21,6 @@ from test_agent import FakePty
 
 class TestClientOverBytes(unittest.TestCase):
     def _pair(self, file_root=None):
-        import collections
-
         to_agent: collections.deque = collections.deque()
         to_master: collections.deque = collections.deque()
         pty = FakePty([b"file1\r\n$ "])
@@ -51,6 +50,9 @@ class TestClientOverBytes(unittest.TestCase):
         helo = client.connect()
         self.assertEqual(helo.mode, config.BASE)
         self.assertIsNotNone(client.screen)
+        self.assertEqual(client.screen.rows, config.DEFAULT_ROWS)
+        self.assertEqual(client.screen.cols, config.DEFAULT_COLS)
+        self.assertEqual(pty.resizes, [])
         self.assertIn("$ ", client.render())
 
         screen = client.cmd("ls")
@@ -104,6 +106,32 @@ class TestClientOverBytes(unittest.TestCase):
             self.assertEqual((inbox / "vpn.conf").read_bytes(), b"hello-xconn\n")
             self.assertEqual(host.core.stats["files"], 1)
 
+    def test_get_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            inbox = Path(tmp) / "inbox"
+            inbox.mkdir()
+            remote = inbox / "out.conf"
+            remote.write_bytes(b"from-agent\n")
+            dest = Path(tmp) / "got.conf"
+            client, host, _ = self._pair(file_root=inbox)
+            client.connect()
+            client.get("out.conf", str(dest))
+            self.assertEqual(dest.read_bytes(), b"from-agent\n")
+
+    def test_refresh_assembles_parts(self) -> None:
+        """Несжимаемый экран приходит кусками SCREEN_PART, сетка собирается."""
+        import random
+
+        client, host, _ = self._pair()
+        client.connect()
+        rng = random.Random(5)
+        host.core._vt.screen.cells[:] = bytes(
+            rng.randrange(256) for _ in range(24 * 80)
+        )
+        host.core._base = None
+        client.refresh()
+        self.assertEqual(bytes(client.screen.cells), bytes(host.core._vt.screen.cells))
+
 
 class TestClientOverAudio(unittest.TestCase):
     """Клиент и хост поверх SampleLink, как два конца кабеля."""
@@ -144,6 +172,8 @@ class TestClientOverAudio(unittest.TestCase):
         self.assertEqual(helo.mode, config.BASE)
         self.assertEqual(client_tr.mode, config.BASE)
         self.assertEqual(agent_tr.mode, config.BASE)
+        self.assertEqual(client.screen.rows, config.DEFAULT_ROWS)
+        self.assertEqual(client.screen.cols, config.DEFAULT_COLS)
         self.assertIn("$ ", client.render())
 
         first = client.cmd("ls")

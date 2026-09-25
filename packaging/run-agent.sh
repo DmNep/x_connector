@@ -8,8 +8,8 @@ if [ -f /etc/default/xconn-agent ]; then
     . /etc/default/xconn-agent
     set +a
 fi
-CAPTURE=${XCONN_CAPTURE:-hw:0,0}
-PLAYBACK=${XCONN_PLAYBACK:-hw:0,0}
+CAPTURE=${XCONN_CAPTURE:-plughw:0,0}
+PLAYBACK=${XCONN_PLAYBACK:-plughw:0,0}
 if [ -x "$PREFIX/python/bin/python3" ]; then
     PYTHON="$PREFIX/python/bin/python3"
 else
