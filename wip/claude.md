@@ -4,17 +4,21 @@ worktree: D:/projects/x_connector-claude
 branch: wip/claude-idle
 task: ""
 hands_off: []
-updated: 2026-09-25T05:15+03:00
+updated: 2026-09-25T05:40+03:00
 ---
 
-Свободен. Слил wip/cursor-safe-connect (первый прогон по кабелю: SCREEN_PART
-нарезка, фикс агента-в-base глушащего HELO нового клиента, sudoers) и
-свою старую wip/claude-idle (докатившаяся раньше docs-правка) в master —
-у README.md был реальный конфликт содержания (обе ветки правили один
-раздел от общего предка до того, как разошлись), разрешил в пользу более
-полной версии и досочинил. Обновил README (вставил docs/demo gif,
-восстановил разделы, которые смёржились не в ту сторону) и AGENTS.md §4
-(версия 0.4.0, 278 тестов, факт первого кабельного прогона). Код
-xconn_channel/ не трогал. Тесты зелёные (278/278). Каталог Claude:
+Свободен. Добил хвост своего же ревью tools/ (находки 5-10, часть уже
+была закрыта параллельно Cursor'ом — wav-бэкенд, dedup _write_report,
+внятные ошибки устройств):
+5. Мёртвый опорный тон 1200 Гц отчитывался как «пара пригодна»
+   (tools/probe.py, tone_imbalance/format_report) — теперь отдельный
+   флаг reference_dead вместо db_ratio(+inf).
+8. main()/build_parser() трёх утилит не гонялись тестами целиком —
+   добавил TestMainCli в test_probe.py и test_ber.py (argv → код
+   возврата → текст отчёта).
+10. Дублирование Goertzel/generate_tone с demodulator.py/modulator.py
+    — оставил как есть: разные по форме алгоритмы (блочный офлайн-анализ
+    vs потоковый PLL), Cursor уже задокументировал разницу в докстринге.
+Тесты зелёные (287/287). Код xconn_channel/ не трогал. Каталог Claude:
 `D:\projects\x_connector-claude`. Перед задачей заполнить поля и
 поставить `status: active`.

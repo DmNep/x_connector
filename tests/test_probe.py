@@ -6,10 +6,14 @@
 from __future__ import annotations
 
 import array
+import contextlib
+import io
 import math
 import os
 import sys
+import tempfile
 import unittest
+import wave
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -26,6 +30,7 @@ from tools.probe import (
     generate_tone,
     goertzel_power,
     is_clipped,
+    main,
     measure_noise,
     peak_vs_target,
     sweep_points,
@@ -120,6 +125,20 @@ class TestImbalance(unittest.TestCase):
         report = tone_imbalance(a, b)
         self.assertTrue(report["shift_tones_down"])
 
+    def test_dead_1200_reference_is_not_reported_usable(self) -> None:
+        """Мёртвый опорный 1200 Гц — не "пара пригодна" (12).
+
+        db_ratio(num, den) с den<=0 отдаёт +inf независимо от num, и без
+        отдельной проверки shift_tones_down тихо становился False —
+        отчёт читался как "всё в порядке" при полностью мёртвом тракте
+        1200 Гц.
+        """
+        dead_1200 = array.array("h", [0] * len(generate_tone(1200, 100)))
+        b = generate_tone(2200, 100)
+        report = tone_imbalance(dead_1200, b)
+        self.assertTrue(report["reference_dead"])
+        self.assertFalse(report["shift_tones_down"])
+
 
 class TestReport(unittest.TestCase):
     def test_selftest_mentions_gate_and_bell(self) -> None:
@@ -135,6 +154,54 @@ class TestReport(unittest.TestCase):
         report = peak_vs_target(generate_tone(1000, 50))
         self.assertEqual(report["target_peak"], config.PEAK_AMPLITUDE)
         self.assertFalse(report["clipped"])
+
+    def test_dead_1200_reference_reported_not_usable(self) -> None:
+        noise = array.array("h", bytes(2 * 800))
+        tones = {
+            1200: array.array("h", [0] * len(generate_tone(1200, 40))),
+            2200: generate_tone(2200, 40),
+        }
+        text = analyze_loopback_sweep(noise, tones)
+        self.assertIn("опорный тон 1200", text)
+        self.assertNotIn("пара 1200/2200 Гц пригодна", text)
+
+
+class TestMainCli(unittest.TestCase):
+    """main(argv) целиком — разбор + отчёт + код возврата, не только внутренности."""
+
+    def test_selftest_default_exits_zero_and_prints_report(self) -> None:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = main([])
+        self.assertEqual(code, 0)
+        self.assertIn("x_connector probe", buf.getvalue())
+
+    def test_selftest_flag_exits_zero(self) -> None:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = main(["--selftest"])
+        self.assertEqual(code, 0)
+        self.assertIn("x_connector probe", buf.getvalue())
+
+    def test_selftest_with_live_is_rejected(self) -> None:
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            code = main(["--selftest", "--live"])
+        self.assertEqual(code, 2)
+
+    def test_wav_flag_reads_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "probe.wav")
+            with wave.open(path, "wb") as wav:
+                wav.setnchannels(1)
+                wav.setsampwidth(2)
+                wav.setframerate(config.SAMPLE_RATE)
+                wav.writeframes(generate_tone(1000, 200).tobytes())
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                code = main(["--wav", path])
+        self.assertEqual(code, 0)
+        self.assertIn("x_connector probe", buf.getvalue())
 
 
 if __name__ == "__main__":

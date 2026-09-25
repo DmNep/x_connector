@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import os
 import sys
 import unittest
@@ -21,6 +23,7 @@ from tools.ber import (
     bit_errors,
     build_parser,
     format_report,
+    main,
     measure_train,
     modulate_train,
     prbs_payload,
@@ -112,6 +115,29 @@ class TestReport(unittest.TestCase):
         self.assertIn("BER x_connector", text)
         self.assertIn("stretch", text)
         self.assertNotIn("\u2212", text)
+
+
+class TestMainCli(unittest.TestCase):
+    """main(argv) \u0446\u0435\u043b\u0438\u043a\u043e\u043c \u2014 \u0440\u0430\u0437\u0431\u043e\u0440 + \u043e\u0442\u0447\u0451\u0442 + \u043a\u043e\u0434 \u0432\u043e\u0437\u0432\u0440\u0430\u0442\u0430, \u043d\u0435 \u0442\u043e\u043b\u044c\u043a\u043e \u0432\u043d\u0443\u0442\u0440\u0435\u043d\u043d\u043e\u0441\u0442\u0438."""
+
+    def test_selftest_flag_exits_zero_and_prints_report(self) -> None:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = main(["--selftest"])
+        self.assertEqual(code, 0)
+        self.assertIn("BER x_connector", buf.getvalue())
+
+    def test_default_dsp_run_exits_zero(self) -> None:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = main(["--frames", "3", "--mode", config.BASE])
+        self.assertEqual(code, 0)
+        self.assertIn("BER x_connector", buf.getvalue())
+
+    def test_bad_frames_through_main_exits_nonzero(self) -> None:
+        with self.assertRaises(SystemExit) as ctx:
+            main(["--selftest", "--frames", "0"])
+        self.assertEqual(ctx.exception.code, 2)
 
 
 if __name__ == "__main__":
