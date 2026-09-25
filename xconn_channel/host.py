@@ -33,12 +33,14 @@ class AgentHost:
         supported=None,
         pump_wait_ms: float = config.PUMP_WAIT_MS,
         pump_idle_ms: float = config.PUMP_IDLE_MS,
+        pump_busy_ms: float = config.PUMP_BUSY_MS,
         file_root=None,
     ) -> None:
         self.pty = pty
         self.transport = transport
         if file_root is None:
             file_root = Path.cwd() / "inbox"
+        is_busy = getattr(pty, "foreground_busy", None)
         self.core = AgentCore(
             pty.write,
             pty.read,
@@ -46,6 +48,8 @@ class AgentHost:
             cols,
             pump_wait_ms=pump_wait_ms,
             pump_idle_ms=pump_idle_ms,
+            pump_busy_ms=pump_busy_ms,
+            is_busy=is_busy if callable(is_busy) else None,
             file_root=file_root,
         )
         if supported is None:
@@ -86,7 +90,7 @@ class AgentHost:
                 self.transport.set_mode(self._pending_mode)
             self._pending_mode = None
             self.connected = True
-        self.core.pump(wait_ms=0, idle_ms=0)
+        self.core.pump(wait_ms=0, idle_ms=0, wait_busy=False)
         if hasattr(self.pty, "child_exited") and self.pty.child_exited():
             if hasattr(self.pty, "restart"):
                 self.pty.restart()

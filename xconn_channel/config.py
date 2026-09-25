@@ -218,9 +218,14 @@ T_LEAD_MS = 60  # пауза перед передачей после приём
 # Сколько агент ждёт вывод PTY перед снимком (host.pump).
 PUMP_WAIT_MS = 250
 PUMP_IDLE_MS = 80
+# Команда ещё в foreground (TIOCGPGRP ≠ bash) — не снимать экран.
+# ping / netplan apply иначе обрезаются через 80 мс тишины.
+PUMP_BUSY_MS = 20000
 # Ожидание начала несущей ответа. Должно покрыть pump + T_LEAD, иначе
-# медленный bash неотличим от мёртвого кабеля.
+# медленный bash неотличим от мёртвого кабеля. HELO/PING остаются
+# короткими; CMD/KEY ждут до PUMP_BUSY (см. T_CMD_CARRIER_MS).
 T_CARRIER_MS = PUMP_WAIT_MS + PUMP_IDLE_MS + T_LEAD_MS + 110  # 500
+T_CMD_CARRIER_MS = PUMP_BUSY_MS + T_LEAD_MS + 500
 T_IDLE_BYTES = 12  # тишина внутри кадра, в байт-времени
 MAX_RETRY = 3
 

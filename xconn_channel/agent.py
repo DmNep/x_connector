@@ -45,6 +45,8 @@ class AgentCore:
         cols=None,
         pump_wait_ms: float = 0,
         pump_idle_ms: float = 0,
+        pump_busy_ms: float = 0,
+        is_busy=None,
         file_root=None,
     ) -> None:
         self._write_pty = write_pty
@@ -60,6 +62,8 @@ class AgentCore:
         # idle — тишина после последнего, после которой снимок стабилен.
         self._pump_wait_ms = pump_wait_ms
         self._pump_idle_ms = pump_idle_ms
+        self._pump_busy_ms = pump_busy_ms
+        self._is_busy = is_busy
         self._file_root = file_root
         self._xfer = None
         self._xfer_out = None
@@ -83,7 +87,12 @@ class AgentCore:
 
     # --- PTY-цикл -------------------------------------------------------------
 
-    def pump(self, wait_ms: float | None = None, idle_ms: float | None = None) -> None:
+    def pump(
+        self,
+        wait_ms: float | None = None,
+        idle_ms: float | None = None,
+        wait_busy: bool = True,
+    ) -> None:
         """Забрать вывод PTY в эмулятор, ответы терминала — обратно в PTY.
 
         Чтение идёт до исчерпания: вывод приходит кусками на любых
@@ -99,8 +108,10 @@ class AgentCore:
         """
         wait = self._pump_wait_ms if wait_ms is None else wait_ms
         idle = self._pump_idle_ms if idle_ms is None else idle_ms
-        first_deadline = time.monotonic() + wait / 1000.0
-        last_data = time.monotonic()
+        started = time.monotonic()
+        first_deadline = started + wait / 1000.0
+        busy_deadline = started + self._pump_busy_ms / 1000.0
+        last_data = started
         got = False
         while True:
             data = self._read_pty()
@@ -119,6 +130,15 @@ class AgentCore:
                 return
             if idle and (now - last_data) * 1000.0 < idle:
                 time.sleep(0.01)
+                continue
+            if (
+                wait_busy
+                and self._is_busy is not None
+                and self._pump_busy_ms > 0
+                and now < busy_deadline
+                and self._is_busy()
+            ):
+                time.sleep(0.05)
                 continue
             return
 

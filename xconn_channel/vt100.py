@@ -60,6 +60,7 @@ class Vt100:
         self._state = _GROUND
         self._params = bytearray()
         self._private = b""
+        self._osc_len = 0
 
     # --- приём потока -------------------------------------------------------
 
@@ -77,6 +78,10 @@ class Vt100:
             return self._ground(byte)
         if self._state == _ESC:
             return self._escape(byte)
+        if self._state == _OSC:
+            return self._osc(byte)
+        if self._state == _OSC_ESC:
+            return self._osc_esc(byte)
         return self._csi(byte)
 
     # --- основное состояние --------------------------------------------------
@@ -140,6 +145,12 @@ class Vt100:
             self._params = bytearray()
             self._private = b""
             return None
+        if byte == ord("]"):
+            # OSC: ESC ] … BEL или ST. Иначе payload (133;start=…)
+            # печатается в сетку — живой bash/systemd так забивает 24×80.
+            self._state = _OSC
+            self._osc_len = 0
+            return None
         # ESC-команды без параметров: сохранение/восстановление курсора
         # (DECSC/DECRC) — единственные из нужных минимому.
         if byte == ord("7"):
@@ -148,6 +159,25 @@ class Vt100:
             self._restore_cursor()
         self._state = _GROUND
         return None
+
+    def _osc(self, byte: int) -> bytes | None:
+        if byte == 0x07 or byte == 0x9C:
+            self._state = _GROUND
+            return None
+        if byte == 0x1B:
+            self._state = _OSC_ESC
+            return None
+        self._osc_len += 1
+        if self._osc_len > 4096:
+            self._state = _GROUND
+        return None
+
+    def _osc_esc(self, byte: int) -> bytes | None:
+        if byte == ord("\\"):
+            self._state = _GROUND
+            return None
+        self._state = _ESC
+        return self._escape(byte)
 
     def _csi(self, byte: int) -> bytes | None:
         if byte in b"?0123456789;:<=>":
@@ -402,4 +432,4 @@ class Vt100:
 
 
 # Состояния парсера.
-_GROUND, _ESC, _CSI = 0, 1, 2
+_GROUND, _ESC, _CSI, _OSC, _OSC_ESC = 0, 1, 2, 3, 4

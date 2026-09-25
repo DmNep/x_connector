@@ -1,11 +1,24 @@
 ---
-status: idle
+status: active
 worktree: D:/projects/x_connector
 branch: wip/cursor-safe-connect
-task: ""
-hands_off: []
-updated: 2026-09-25T22:12+03:00
+task: коммит OSC/pump, AGENTS §4, слив в master
+hands_off:
+ - xconn_channel/vt100.py
+ - xconn_channel/agent.py
+ - xconn_channel/shell.py
+ - xconn_channel/host.py
+ - xconn_channel/session.py
+ - xconn_channel/config.py
+ - xconn_channel/client.py
+ - tests/test_vt100.py
+ - tests/test_agent.py
+ - tests/test_client.py
+ - AGENTS.md
+ - docs/manual.md
+ - wip/cursor.md
+updated: 2026-09-25T23:30+03:00
 ---
 
-Свободен. install.sh без !requiretty — Ubuntu 26.04 visudo его не знает.
-Живой канал: sudo:0, termv100 на Keenetic-6622, 192.168.2.84.
+Пункт 3: коммит правок консоли, обновление AGENTS §4 и слив в master.
+Claude idle, master свободен.

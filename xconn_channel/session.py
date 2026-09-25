@@ -100,18 +100,25 @@ class MasterSession:
     def seq(self) -> int:
         return self._seq
 
-    def exchange(self, frame_type: int, payload: bytes = b"", accept=None) -> Frame:
+    def exchange(
+        self,
+        frame_type: int,
+        payload: bytes = b"",
+        accept=None,
+        timeout_ms: float | None = None,
+    ) -> Frame:
         """Один обмен: REQ(seq) -> RESP(seq) -> ACK(seq).
 
         accept(frame) — разбор полезной нагрузки до ACK. ScreenError
         превращается в NAK, агент шлёт SCREEN_FULL (docs/protocol.md 6.2).
+        timeout_ms — T_CARRIER этого обмена; None — config.T_CARRIER_MS.
         """
         attempts = 0
         req_naks = 0
         reason = "нет ответа"
         while attempts <= config.MAX_RETRY and req_naks <= config.MAX_RETRY:
             self._send(framing.build_frame(frame_type, self._seq, payload))
-            reply = self._await_reply(self._seq)
+            reply = self._await_reply(self._seq, timeout_ms)
 
             if isinstance(reply, Frame) and reply.type == config.NAK:
                 code = (
@@ -133,7 +140,7 @@ class MasterSession:
                 self.stats["naks"] += 1
                 if reply.seq is not None:
                     self._send(framing.nak(reply.seq, reply.code))
-                retry = self._await_reply(self._seq)
+                retry = self._await_reply(self._seq, timeout_ms)
                 if (
                     isinstance(retry, Frame)
                     and retry.type != config.NAK
@@ -204,14 +211,17 @@ class MasterSession:
     def _advance_seq(self) -> None:
         self._seq = (self._seq + 1) % 256
 
-    def _await_reply(self, seq: int) -> Frame | FrameError | None:
-        """Ждать ответ до T_CARRIER.
+    def _await_reply(
+        self, seq: int, timeout_ms: float | None = None
+    ) -> Frame | FrameError | None:
+        """Ждать ответ до T_CARRIER (или timeout_ms).
 
         Обрыв внутри кадра по T_IDLE — работа транспорта (docs/protocol.md
         8.3): сессия видит уже собранный кадр или пусто. Один вызов
         receive с остатком T_CARRIER; пустой возврат — агент молчит.
         """
-        deadline = self._clock() + config.T_CARRIER_MS / 1000.0
+        carrier = config.T_CARRIER_MS if timeout_ms is None else timeout_ms
+        deadline = self._clock() + carrier / 1000.0
         remaining = deadline - self._clock()
         if remaining <= 0:
             return None

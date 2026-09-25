@@ -278,5 +278,30 @@ class TestChunkedStream(unittest.TestCase):
             )
 
 
+class TestOscSwallow(unittest.TestCase):
+    def test_osc_bel_does_not_print_payload(self) -> None:
+        """OSC 133 с BEL: сетка без start=/machineid, только промпт."""
+        vt = Vt100(4, 40)
+        vt.feed(
+            b"\x1b]133;start=95bc69d6-48d9-45fd-abbe-54573f0a335a;"
+            b"machineid=abc;type=shell\x07"
+            b"xconn@termv100:~$ "
+        )
+        self.assertEqual(text_of(vt)[0], "xconn@termv100:~$")
+        self.assertNotIn("start=", "".join(text_of(vt)))
+        self.assertEqual(vt.screen.flags & FLAG_BEL, 0)
+
+    def test_osc_st_esc_backslash(self) -> None:
+        vt = Vt100(2, 20)
+        vt.feed(b"\x1b]133;A\x1b\\ok")
+        self.assertEqual(text_of(vt)[0], "ok")
+
+    def test_osc_split_across_feeds(self) -> None:
+        vt = Vt100(2, 20)
+        vt.feed(b"\x1b]133;start=")
+        vt.feed(b"uuid\x07hi")
+        self.assertEqual(text_of(vt)[0], "hi")
+
+
 if __name__ == "__main__":
     unittest.main()
