@@ -283,11 +283,11 @@ class TestOscSwallow(unittest.TestCase):
         """OSC 133 с BEL: сетка без start=/machineid, только промпт."""
         vt = Vt100(4, 40)
         vt.feed(
-            b"\x1b]133;start=95bc69d6-48d9-45fd-abbe-54573f0a335a;"
+            b"\x1b]133;start=00000000-0000-4000-8000-000000000001;"
             b"machineid=abc;type=shell\x07"
-            b"xconn@termv100:~$ "
+            b"xconn@host:~$ "
         )
-        self.assertEqual(text_of(vt)[0], "xconn@termv100:~$")
+        self.assertEqual(text_of(vt)[0], "xconn@host:~$")
         self.assertNotIn("start=", "".join(text_of(vt)))
         self.assertEqual(vt.screen.flags & FLAG_BEL, 0)
 
