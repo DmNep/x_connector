@@ -3,6 +3,9 @@ __pycache__/
 .pytest_cache/
 .venv/
 venv/
+build/
+dist/
+*.egg-info/
 /drafts/
 /packaging/python-linux/*.tar.gz
 /packaging/python-linux/*.tar.gz.part

@@ -160,7 +160,9 @@ class TestAlsaAudioInitCleanup(unittest.TestCase):
             "xconn_channel.audioio.subprocess.Popen",
             side_effect=[fake_aplay, fake_arecord],
         ):
-            with mock.patch("xconn_channel.audioio.os.set_blocking"):
+            # os.set_blocking есть на Windows только с 3.12; create=True
+            # позволяет моку встать и на 3.10, где атрибута ещё нет.
+            with mock.patch("xconn_channel.audioio.os.set_blocking", create=True):
                 AlsaAudio()
         fake_aplay.terminate.assert_not_called()
 
