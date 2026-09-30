@@ -75,11 +75,15 @@ class TestCliDevices(unittest.TestCase):
         self.assertTrue(callable(args.func))
 
     def test_client_prints_plain_error(self) -> None:
+        """DeviceError с winmm печатается как текст, код 2, без traceback.
+
+        Бэкенд задан явно: на Linux умолчание — alsa, и check_winmm не вызывается.
+        """
         captured = io.StringIO()
         err = DeviceError("нет устройства записи (микрофон или линейный вход).")
         with patch.object(cli, "check_winmm", side_effect=err):
             with patch.object(sys, "stderr", captured):
-                code = cli.main(["client", "--repl"])
+                code = cli.main(["client", "--backend", "winmm", "--repl"])
         self.assertEqual(code, 2)
         self.assertIn("нет устройства записи", captured.getvalue())
         self.assertNotIn("Traceback", captured.getvalue())
