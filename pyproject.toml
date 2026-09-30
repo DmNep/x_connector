@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xconn_channel"
+# Держать равным xconn_channel/__init__.py:__version__. Это номер пакета, не PROTO_VERSION.
+version = "1.0.0"
+description = "Внеполосная консоль по аудиокабелю: полудуплекс Bell 202, сетка VT100, Windows winmm и Linux ALSA"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Дмитрий Непобедимый" }]
+keywords = ["afsk", "audio", "terminal", "vt100", "bell202"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: System :: Systems Administration",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/DmNep/x_connector"
+Documentation = "https://github.com/DmNep/x_connector/blob/master/docs/manual.md"
+Changelog = "https://github.com/DmNep/x_connector/blob/master/CHANGELOG.md"
+
+[tool.setuptools]
+packages = ["xconn_channel"]

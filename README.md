@@ -1,5 +1,10 @@
 # x_connector
 
+[![tests](https://github.com/DmNep/x_connector/actions/workflows/tests.yml/badge.svg)](https://github.com/DmNep/x_connector/actions/workflows/tests.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+📝 Статья на Хабре: (ссылка появится после модерации)
+
 Внеполосная консоль между ноутбуком (Windows) и сервером (Linux) по **аудиокабелю**. Сеть, USB и радио в рабочем режиме не используются: команды идут звуком в одну сторону, обратно — текстовая картинка терминала (сетка символов, не скриншот).
 
 Назначение — починить сломанную сеть на сервере, когда ноутбук нельзя к нему подключить обычным Ethernet/Wi‑Fi/VPN. Канал живёт на звуковой карте и поэтому не зависит от сокетов, маршрутизации, DNS и брандмауэра.

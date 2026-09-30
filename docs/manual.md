@@ -2,7 +2,7 @@
 
 Как собрать тракт, запустить канал и понять, что сломалось. Спецификация кадров и тонов — в [protocol.md](protocol.md). Решения «зачем так» — в [AGENTS.md](../AGENTS.md).
 
-Версия пакета: `xconn_channel` 0.4.0.
+Версия пакета: `xconn_channel` 1.0.0. Версия провода (`PROTO_VERSION` в `HELO`) — по-прежнему 1, см. [protocol.md](protocol.md).
 
 ## 1. Что это за система
 
@@ -205,16 +205,16 @@ py -m xconn_channel client --capture 0 --playback 1 --repl
 py -m xconn_channel client --capture 0 --playback 1 -c "ip a" -c "ip r"
 ```
 
-На этом ноутбуке карта **0** — микрофон; **1** — аналоговый выход. `--playback 0` уходит в HDMI и оставляет эфир тихим.
+Номера устройств берите из вывода `devices`, они разные на каждой машине. Типичная ошибка: `--playback` указывает на HDMI, эфир молчит. Аналоговый выход — отдельное устройство.
 
 После `connect` печатается сетка 24×80 (снимок при необходимости едет кусками). Дальше — как в loopback: команды, `.key`, `.ping`, `.refresh`, `.resize`, `.get`.
 
 ### 6.4 Что показало железо (2026-09-22)
 
-Сервер: Ubuntu 26.04 (`resolute`), Realtek ALC897. Ноутбук: Windows, Realtek, улучшения микрофона выключены.
+Прогон на Ubuntu 26.04 (`resolute`) и кодеке класса Realtek ALC897. На ноутбуке Windows улучшения микрофона выключены.
 
-- Карта **0** — HDMI монитора. Аналог — карта **1**, устройства `pcmC1D0c` / `pcmC1D0p`.
-- Чистый `hw:1,0` с `-c 1` даёт `Channels count non available`. Рабочий путь: `plughw:1,0`.
+- Карта **0** на сервере оказалась HDMI монитора. Аналог — другая карта; смотреть `/proc/asound/pcm` (имена вроде `pcmC1D0c` / `pcmC1D0p`).
+- Чистый `hw:N,M` с `-c 1` даёт `Channels count non available`. Рабочий путь: `plughw:N,M`.
 - Без пакета `alsa-utils` агент падает: `No such file or directory: 'aplay'`. Пакеты лежат на флешке, не через apt.
 - Несжимаемый 24×80 режется на `SCREEN_PART`. Старый агент без нарезки по-прежнему даёт `nak=0x03` — клиент тогда жмёт окно до 8×32.
 - Повторный HELO: клиент пробует `probe`, затем `base`. Агент после сеанса слушает 1200 бод — без этого шага эфир молчит до restart.
@@ -372,7 +372,7 @@ nft list ruleset
 | `Channels count non available` | `hw:` не умеет моно; в `/etc/default/xconn-agent` поставьте `plughw:N,M` |
 | HDMI в `hw:0,0`, аналог на другой карте | смотреть `/proc/asound/pcm`: ALC/Analog, не HDMI; типично `hw:1,0` |
 | `nak=0x03` на `.refresh` / команде | старый агент без нарезки; обновить с флешки или `.resize 8 32` |
-| После NAK агент не отвечает на HELO | клиент 0.4 сам повторит HELO в `base`; иначе `systemctl restart xconn-agent` |
+| После NAK агент не отвечает на HELO | клиент сам повторит HELO в `base`; иначе `systemctl restart xconn-agent` |
 | visudo: unknown setting `requiretty` | Ubuntu 26.04; в sudoers только `xconn ALL=(root) NOPASSWD:ALL`, без `!requiretty` |
 | В сетке `3008;start=` | старый агент без глотания OSC; `systemctl restart xconn-agent` после записи флешки |
 | Снимок посреди `ping` / `netplan apply` | нужен агент с помпой по `TIOCGPGRP` и клиент с `T_CMD_CARRIER` |
