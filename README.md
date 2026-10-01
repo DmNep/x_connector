@@ -93,4 +93,3 @@ py tools/ber.py --selftest
 ```
 
 Подробности запуска по кабелю — в [мануале](docs/manual.md).
-
