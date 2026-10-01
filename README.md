@@ -92,4 +92,4 @@ py tools/probe.py --selftest
 py tools/ber.py --selftest
 ```
 
-Подробности запуска по кабелю — в [мануале](docs/manual.md)
+Подробности запуска по кабелю — в [мануале](docs/manual.md).
