@@ -6,8 +6,10 @@
 (REQ -> RESP -> ACK, GAP, дельта/полный снимок) соответствуют
 docs/protocol.md 8.1, 8.2, 6.2.
 
-Запуск: py -m pip install pillow && py docs/demo/make_demo_gif.py
-Результат — docs/demo/x_connector_demo.gif, рядом со скриптом.
+Запуск: py -m pip install pillow && py docs/demo/make_demo_gif.py [--lang en]
+Результат — docs/demo/x_connector_demo.gif (или x_connector_demo_en.gif
+для --lang en), рядом со скриптом. Надписи на кадрах — на выбранном
+языке, --lang ru (по умолчанию) или --lang en; сам сюжет одинаковый.
 Требует шрифты Windows (Consolas, Segoe UI); на другой ОС поправьте
 FONTS_DIR и имена файлов шрифтов.
 SPEED_FACTOR ниже — общий множитель скорости (0.5 — вдвое медленнее).
@@ -15,7 +17,49 @@ SPEED_FACTOR ниже — общий множитель скорости (0.5 �
 
 import math
 import os
+import sys
 from PIL import Image, ImageDraw, ImageFont
+
+LANG = "en" if "--lang" in sys.argv and sys.argv[sys.argv.index("--lang") + 1] == "en" else "ru"
+
+STRINGS = {
+    "ru": {
+        "title": "x_connector — аудиоканал ноутбук ↔ сервер",
+        "subtitle": "CPFSK Bell 202 · полудуплекс · схема тонов упрощена для наглядности",
+        "laptop_label": "ноутбук (клиент)",
+        "laptop_sub": "ИИ-агент",
+        "server_label": "сервер (агент)",
+        "server_sub": "Linux, без сети",
+        "wire_top": "клиент → сервер (CMD / ACK)",
+        "wire_bot": "сервер → клиент (SCREEN_FULL / DELTA)",
+        "term_header": "экран сервера — видит клиент после ответа (docs/protocol.md 6)",
+        "typing": "АИ набирает команду…",
+        "gap_switch": "GAP — тишина, смена направления",
+        "gap": "GAP",
+        "updated": "Экран обновлён — ИИ читает ответ",
+        "channel_alive": "Канал жив: сеть починена без сетевого стека",
+        "no_ip": "    (нет IP — сеть не поднята)",
+        "state_up": "    состояние: UP",
+    },
+    "en": {
+        "title": "x_connector — audio channel laptop ↔ server",
+        "subtitle": "CPFSK Bell 202 · half-duplex · tone scheme simplified for clarity",
+        "laptop_label": "laptop (client)",
+        "laptop_sub": "AI agent",
+        "server_label": "server (agent)",
+        "server_sub": "Linux, no network",
+        "wire_top": "client → server (CMD / ACK)",
+        "wire_bot": "server → client (SCREEN_FULL / DELTA)",
+        "term_header": "server screen — seen by the client after the reply (docs/protocol.md 6)",
+        "typing": "AI is typing a command…",
+        "gap_switch": "GAP — silence, direction switch",
+        "gap": "GAP",
+        "updated": "Screen updated — AI reads the reply",
+        "channel_alive": "Channel alive: network fixed without the network stack",
+        "no_ip": "    (no IP — network is not up)",
+        "state_up": "    state: UP",
+    },
+}[LANG]
 
 W, H = 980, 700
 BG = (10, 14, 20)
@@ -112,19 +156,14 @@ def draw_wire(
 
 
 def draw_header(d: ImageDraw.ImageDraw) -> None:
-    d.text((60, 18), "x_connector \u2014 \u0430\u0443\u0434\u0438\u043e\u043a\u0430\u043d\u0430\u043b \u043d\u043e\u0443\u0442\u0431\u0443\u043a \u2194 \u0441\u0435\u0440\u0432\u0435\u0440", font=f_title, fill=WHITE)
-    d.text(
-        (60, 46),
-        "CPFSK Bell 202 \u00b7 \u043f\u043e\u043b\u0443\u0434\u0443\u043f\u043b\u0435\u043a\u0441 \u00b7 \u0441\u0445\u0435\u043c\u0430 \u0442\u043e\u043d\u043e\u0432 \u0443\u043f\u0440\u043e\u0449\u0435\u043d\u0430 \u0434\u043b\u044f \u043d\u0430\u0433\u043b\u044f\u0434\u043d\u043e\u0441\u0442\u0438",
-        font=f_sub,
-        fill=GRAY,
-    )
+    d.text((60, 18), STRINGS["title"], font=f_title, fill=WHITE)
+    d.text((60, 46), STRINGS["subtitle"], font=f_sub, fill=GRAY)
     draw_laptop(d, LAPTOP_X, LAPTOP_Y)
-    d.text((LAPTOP_X - 8, LAPTOP_Y + 72), "\u043d\u043e\u0443\u0442\u0431\u0443\u043a (\u043a\u043b\u0438\u0435\u043d\u0442)", font=f_label, fill=WHITE)
-    d.text((LAPTOP_X - 8, LAPTOP_Y + 92), "\u0418\u0418-\u0430\u0433\u0435\u043d\u0442", font=f_small, fill=GRAY)
+    d.text((LAPTOP_X - 8, LAPTOP_Y + 72), STRINGS["laptop_label"], font=f_label, fill=WHITE)
+    d.text((LAPTOP_X - 8, LAPTOP_Y + 92), STRINGS["laptop_sub"], font=f_small, fill=GRAY)
     draw_server(d, SERVER_X, SERVER_Y)
-    d.text((SERVER_X - 6, SERVER_Y + 72), "\u0441\u0435\u0440\u0432\u0435\u0440 (\u0430\u0433\u0435\u043d\u0442)", font=f_label, fill=WHITE)
-    d.text((SERVER_X - 6, SERVER_Y + 92), "Linux, \u0431\u0435\u0437 \u0441\u0435\u0442\u0438", font=f_small, fill=GRAY)
+    d.text((SERVER_X - 6, SERVER_Y + 72), STRINGS["server_label"], font=f_label, fill=WHITE)
+    d.text((SERVER_X - 6, SERVER_Y + 92), STRINGS["server_sub"], font=f_small, fill=GRAY)
 
 
 def draw_status(d: ImageDraw.ImageDraw, text: str, color) -> None:
@@ -143,7 +182,7 @@ def draw_terminal(d: ImageDraw.ImageDraw, lines, cursor_row, cursor_col, cursor_
         d.ellipse([TERM_X0 + 12 + i * 18, TERM_Y0 + 9, TERM_X0 + 20 + i * 18, TERM_Y0 + 17], fill=c)
     d.text(
         (TERM_X0 + 80, TERM_Y0 + 5),
-        "\u044d\u043a\u0440\u0430\u043d \u0441\u0435\u0440\u0432\u0435\u0440\u0430 \u2014 \u0432\u0438\u0434\u0438\u0442 \u043a\u043b\u0438\u0435\u043d\u0442 \u043f\u043e\u0441\u043b\u0435 \u043e\u0442\u0432\u0435\u0442\u0430 (docs/protocol.md 6)",
+        STRINGS["term_header"],
         font=f_small,
         fill=GRAY,
     )
@@ -174,8 +213,8 @@ def frame(status_text, status_color, top_active, bot_active, top_reveal, bot_rev
     draw_header(d)
     bits_top = "10110100110101101011"
     bits_bot = "11010011011010110100"
-    draw_wire(d, WIRE_TOP_Y, "\u043a\u043b\u0438\u0435\u043d\u0442 \u2192 \u0441\u0435\u0440\u0432\u0435\u0440 (CMD / ACK)", top_active, CLIENT_COLOR, bits_top, top_reveal)
-    draw_wire(d, WIRE_BOT_Y, "\u0441\u0435\u0440\u0432\u0435\u0440 \u2192 \u043a\u043b\u0438\u0435\u043d\u0442 (SCREEN_FULL / DELTA)", bot_active, AGENT_COLOR, bits_bot, bot_reveal)
+    draw_wire(d, WIRE_TOP_Y, STRINGS["wire_top"], top_active, CLIENT_COLOR, bits_top, top_reveal)
+    draw_wire(d, WIRE_BOT_Y, STRINGS["wire_bot"], bot_active, AGENT_COLOR, bits_bot, bot_reveal)
     draw_status(d, status_text, status_color)
     draw_terminal(d, term_lines, cursor_row if cursor_row is not None else -1, cursor_col, cursor_on)
     return img
@@ -188,7 +227,7 @@ SCREEN_BROKEN = [
     "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536",
     "    inet 127.0.0.1/8 scope host lo",
     "2: eth0: <BROADCAST,MULTICAST> mtu 1500",
-    "    (\u043d\u0435\u0442 IP \u2014 \u0441\u0435\u0442\u044c \u043d\u0435 \u043f\u043e\u0434\u043d\u044f\u0442\u0430)",
+    STRINGS["no_ip"],
     PROMPT,
 ]
 
@@ -197,7 +236,7 @@ SCREEN_FIX_RUNNING = [
     "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536",
     "    inet 127.0.0.1/8 scope host lo",
     "2: eth0: <BROADCAST,MULTICAST> mtu 1500",
-    "    (\u043d\u0435\u0442 IP \u2014 \u0441\u0435\u0442\u044c \u043d\u0435 \u043f\u043e\u0434\u043d\u044f\u0442\u0430)",
+    STRINGS["no_ip"],
     PROMPT + "netplan apply",
 ]
 
@@ -205,7 +244,7 @@ SCREEN_FIXED = [
     PROMPT + "ip a",
     "2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500",
     "    inet 192.168.1.42/24 scope global eth0",
-    "    \u0441\u043e\u0441\u0442\u043e\u044f\u043d\u0438\u0435: UP",
+    STRINGS["state_up"],
     PROMPT + "ss -tunap | head -3",
     "tcp  LISTEN  0  128  0.0.0.0:22  0.0.0.0:*  sshd",
     PROMPT,
@@ -240,7 +279,7 @@ def add(img, ms):
 def step_exchange(pre_lines, prompt_row, cmd_text, seq, resp_label, post_lines):
     # 1. Печать команды ИИ-агентом на ноутбуке (никакого сигнала ещё нет).
     for lines, n in typing_variants(pre_lines, prompt_row, cmd_text):
-        add(frame(f"\u0410\u0418 \u043d\u0430\u0431\u0438\u0440\u0430\u0435\u0442 \u043a\u043e\u043c\u0430\u043d\u0434\u0443\u2026", GRAY, False, False, 0, 0, lines,
+        add(frame(STRINGS["typing"], GRAY, False, False, 0, 0, lines,
                    cursor_row=prompt_row, cursor_col=n, cursor_on=True), 90)
     final_typed = list(pre_lines)
     final_typed[prompt_row] = pre_lines[prompt_row] + cmd_text
@@ -251,7 +290,7 @@ def step_exchange(pre_lines, prompt_row, cmd_text, seq, resp_label, post_lines):
         add(frame(label, CLIENT_COLOR, True, False, reveal, 0, final_typed,
                    cursor_row=prompt_row, cursor_col=cur_col, cursor_on=True), 110)
     # 3. GAP.
-    add(frame("GAP \u2014 \u0442\u0438\u0448\u0438\u043d\u0430, \u0441\u043c\u0435\u043d\u0430 \u043d\u0430\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u0438\u044f", GRAY, False, False, 0, 0, final_typed,
+    add(frame(STRINGS["gap_switch"], GRAY, False, False, 0, 0, final_typed,
                cursor_row=prompt_row, cursor_col=cur_col, cursor_on=False), 160)
     # 4. RESP: сервер отвечает снимком экрана по нижнему проводу.
     label2 = f"RESP  {resp_label}  seq={seq}"
@@ -259,14 +298,14 @@ def step_exchange(pre_lines, prompt_row, cmd_text, seq, resp_label, post_lines):
         add(frame(label2, AGENT_COLOR, False, True, 0, reveal, final_typed,
                    cursor_row=prompt_row, cursor_col=cur_col, cursor_on=True), 110)
     # 5. GAP.
-    add(frame("GAP", GRAY, False, False, 0, 0, final_typed,
+    add(frame(STRINGS["gap"], GRAY, False, False, 0, 0, final_typed,
                cursor_row=prompt_row, cursor_col=cur_col, cursor_on=False), 140)
     # 6. ACK по верхнему проводу.
     add(frame(f"ACK  seq={seq}", CLIENT_COLOR, True, False, 1.0, 0, final_typed,
                cursor_row=prompt_row, cursor_col=cur_col, cursor_on=True), 150)
     # 7. Экран клиента обновляется принятым снимком/дельтой.
     last_row = len(post_lines) - 1
-    add(frame("\u042d\u043a\u0440\u0430\u043d \u043e\u0431\u043d\u043e\u0432\u043b\u0451\u043d \u2014 \u0418\u0418 \u0447\u0438\u0442\u0430\u0435\u0442 \u043e\u0442\u0432\u0435\u0442", (140, 220, 150), False, False, 0, 0, post_lines,
+    add(frame(STRINGS["updated"], (140, 220, 150), False, False, 0, 0, post_lines,
                cursor_row=last_row, cursor_col=len(post_lines[last_row]), cursor_on=True), 900)
 
 
@@ -300,10 +339,11 @@ step_exchange(
 )
 
 # финальная пауза на восстановленном экране
-add(frame("\u041a\u0430\u043d\u0430\u043b \u0436\u0438\u0432: \u0441\u0435\u0442\u044c \u043f\u043e\u0447\u0438\u043d\u0435\u043d\u0430 \u0431\u0435\u0437 \u0441\u0435\u0442\u0435\u0432\u043e\u0433\u043e \u0441\u0442\u0435\u043a\u0430", (140, 220, 150), False, False, 0, 0, SCREEN_FIXED,
+add(frame(STRINGS["channel_alive"], (140, 220, 150), False, False, 0, 0, SCREEN_FIXED,
            cursor_row=len(SCREEN_FIXED) - 1, cursor_col=0, cursor_on=True), 1600)
 
-out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "x_connector_demo.gif")
+out_name = "x_connector_demo.gif" if LANG == "ru" else "x_connector_demo_en.gif"
+out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), out_name)
 frames[0].save(
     out_path,
     save_all=True,

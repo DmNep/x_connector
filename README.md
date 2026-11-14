@@ -1,5 +1,7 @@
 # x_connector
 
+**Русский** · [English](README.en.md)
+
 [![tests](https://github.com/DmNep/x_connector/actions/workflows/tests.yml/badge.svg)](https://github.com/DmNep/x_connector/actions/workflows/tests.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
